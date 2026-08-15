@@ -1,0 +1,7356 @@
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Youssef Allouah1 Rachid Guerraoui 1 Nirupam Gupta 1 Rafa¨el Pinot 1 John Stephan 1
+Abstract
+The ubiquity of distributed machine learning (ML)
+in sensitive public domain applications calls for
+algorithms that protect data privacy, while being
+robust to faults and adversarial behaviors. Al-
+though privacy and robustness have been exten-
+sively studied independently in distributed ML,
+their synthesis remains poorly understood. We
+present the first tight analysis of the error incurred
+by any algorithm ensuring robustness against a
+fraction of adversarial machines, as well as dif-
+ferential privacy (DP) for honest machines’ data
+against any other curious entity. Our analysis ex-
+hibits a fundamental trade-off between privacy,
+robustness, and utility. To prove our lower bound,
+we consider the case of mean estimation, sub-
+ject to distributed DP and robustness constraints,
+and devise reductions to centralized estimation
+of one-way marginals. We prove our matching
+upper bound by presenting a new distributed ML
+algorithm using a high-dimensional robust aggre-
+gation rule. The latter amortizes the dependence
+on the dimension in the error (caused by adversar-
+ial workers and DP), while being agnostic to the
+statistical properties of the data.
+1. Introduction
+Distributed machine learning (ML) has been playing a piv-
+otal role in a wide range of applications (Dean et al., 2012;
+Abadi et al., 2016), due to an unprecedented growth in the
+complexity of ML models and the volume of data being used
+for training purposes. Distributed ML breaks a complex ML
+task into sub-tasks that are performed in a collaborative fash-
+ion. In the standard server-based architecture, n machines
+(a.k.a., workers) collaboratively train a global model on their
+datasets, with the help of a coordinator (the server). This
+is typically achieved through a distributed implementation
+1Ecole Polytechnique F ´ed´erale de Lausanne (EPFL),
+Switzerland. Correspondence to: Youssef Allouah
+<youssef.allouah@epfl.ch>.
+Proceedings of the 40 th International Conference on Machine
+Learning, Honolulu, Hawaii, USA. PMLR 202, 2023. Copyright
+2023 by the author(s).
+of the renowned stochastic gradient descent (SGD) algo-
+rithm (Bertsekas & Tsitsiklis, 2015). In distributed SGD (or
+DSGD), the server maintains a model which is updated itera-
+tively by averaging gradients of the loss function associated
+with the model, computed by the different workers upon
+sampling random points from their local datasets. DSGD is
+particularly useful in cases where the data held by the work-
+ers is too sensitive to be shared, e.g., medical data collected
+by several hospitals (Sheller et al., 2020).
+Privacy. Although DSGD inherently ensures privacy of
+the workers’ data to an extent, by not sharing it explicitly,
+information leakage can still be significant. When the ML
+model maintained at the server is publicly released, it may
+be exposed to membership inference (Shokri et al., 2016) or
+model inversion attacks (Fredrikson et al., 2015; Hitaj et al.,
+2017; Melis et al., 2019) by external entities. Furthermore,
+upon observing the gradients and transient models during
+the learning procedure, curious machines (be they workers
+or the server itself) can infer sensitive information about the
+datasets held locally by the machines, or even reconstruct
+data points in certain scenarios (Phong et al., 2017; Wang
+et al., 2019b; Zhu et al., 2019; Zhao et al., 2020).
+Robustness. In real-world distributed systems, it is ar-
+guably inevitable to encounter faulty workers that may devi-
+ate from their prescribed algorithm. This may result from
+hardware and software bugs, data corruption, network la-
+tency, or malicious adversaries controlling a subset of work-
+ers. To cover all such possible scenarios, it is common to
+assume that a fraction of the machines can be adversarial1
+and arbitrarily deviate from their algorithms. In the context
+of DSGD, adversarial workers may send incorrect gradi-
+ents (Feng et al., 2015; Su & Vaidya, 2016) to the server
+and critically influence the learning procedure, as shown
+in (Baruch et al., 2019; Xie et al., 2019).
+Integrating privacy and robustness. With the growing
+concerns and legal obligations regarding the processing of
+public data in AI-driven technologies (EU, 2016), privacy
+and robustness issues question the very applicability of ML
+in critical public domain services, such as healthcare or
+banking. It is thus natural to seek distributed ML methods
+that simultaneously ensure privacy and robustness. In fact,
+1Sometimes called “Byzantine” in the parlance of distributed
+computing (Lamport et al., 1982).
+1
+arXiv:2302.04787v2  [cs.LG]  29 May 2023
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+these aspects have separately received significant attention
+in the past. On the one hand, the standard statistical pri-
+vacy requirement of (ε, δ)-differential privacy ((ε, δ)-DP)
+has been studied to a great extent in the context of dis-
+tributed ML (Choudhury et al., 2019; Hu et al., 2020; Noble
+et al., 2022). On the other hand, numerous provably robust
+adaptations of DSGD have been proposed (Blanchard et al.,
+2017; Xie et al., 2018; Yin et al., 2018; Gupta et al., 2021;
+Farhadkhani et al., 2022). Yet, the synthesis of privacy and
+robustness remains highly understudied in distributed ML.
+The few works on this topic, such as (Guerraoui et al., 2021;
+Zhu & Ling, 2022; Xiang & Su, 2022; Ma et al., 2022), only
+focus on per-step privacy, and provide loose upper bounds
+on the learning error. On the other hand, the guarantees pre-
+sented in (Cheu et al., 2021; Acharya et al., 2021) only apply
+to discrete distribution estimation subject to non-interactive
+local DP (Kasiviswanathan et al., 2011), a restricted case of
+distributed ML where each worker holds a single data point
+and can be queried only once.
+An orthogonal line of work studied the case where the server
+is assumed not to be curious, i.e., data only needs to be pro-
+tected against the public release of the model (Dwork & Lei,
+2009; Liu et al., 2021b; Hopkins et al., 2022a; Liu et al.,
+2022). In this setting, it was recently shown that privacy and
+robustness are mutually beneficial (Georgiev & Hopkins,
+2022; Hopkins et al., 2022b). However, the assumption of
+a non-curious server may not be viable, especially in appli-
+cations such as healthcare and finance, where sovereignty
+of data must be protected at every stage of the learning pro-
+cedure (Lowy et al., 2023). In this paper, we focus on the
+setting where the server itself may be curious, and we show
+that privacy and robustness are actually at odds.
+1.1. Contributions
+We precisely characterize the privacy-robustness-utility
+trilemma in distributed learning. Specifically, we present the
+first tight analysis of the error incurred by any distributed
+ML algorithm that simultaneously ensures (i) robustness
+against a minority of adversarial workers, and (ii) differ-
+ential privacy (DP) of each worker’s data against curious
+entities including other workers and the server. In short, we
+show that, in addition to the usual separate costs of privacy
+and robustness, the learning accuracy necessarily degrades
+due to their interplay.
+Main results. We consider a system of n workers up to
+f of which (of unknown identity) may be adversarial, and
+the remainder are honest. The server is assumed honest-but-
+curious (Bonawitz et al., 2016). Each honest worker holds
+a dataset comprising m points. The goal of the server is
+to learn a model, parameterized by a d-dimensional vector,
+incurring minimum loss over the collective dataset of the
+honest workers. We denote by G the heterogeneity (Karim-
+ireddy et al., 2020; 2022) between the honest datasets.
+We show that a distributed learning algorithm that is robust
+to f adversarial workers, while ensuring (ε, δ)-DP of each
+honest worker’s data against the server (and other curious
+workers) incurs a training error in
+eΩ
+ d
+ε2nm2 + f
+n · 1
+ε2m2 + f
+n · G2
+
+, (1)
+where eΩ ignores the logarithmic terms.
+The first and the third terms in (1) are the respective errors
+due to privacy and robustness separately. Importantly, the
+second term represents the additional cost of satisfying pri-
+vacy and robustness simultaneously. We then present a new
+distributed ML algorithm, SAFE -DSHB 2, which we prove
+yields a matching upper bound (up to a logarithmic factor)
+for the class of smooth and strongly convex loss functions,
+while ensuring both privacy and robustness. We also obtain
+an upper bound for smooth non-convex learning problems.
+The key to proving the tightness of this trade-off is the ro-
+bust high-dimension aggregation rule we introduce, namely
+SMEA3. As an important consequence of our result, we ob-
+serve that the privacy-robustness trade-off (second term) is
+dominated by the privacy cost alone (first term) when the di-
+mension d is larger than the number of adversarial workers
+f. This observation however does not mean that the trade-
+off is not significant, but rather that it can be adequately
+controlled when using SMEA. This would not have been
+possible otherwise with the use of existing aggregation rules
+such as coordinate-wise or geometric median, for which
+the upper bound has an additional dimension factor in the
+privacy-robustness trade-off.
+Independent contributions. As a byproduct of our analy-
+sis, we obtain several results that are of independent interest
+to both the robust distributed ML and the privacy commu-
+nities. Indeed, our upper bound is tight for strongly convex
+losses, even when removing the privacy constraints. This is
+mainly due to the use of momentum in SAFE -DSHB (see
+Section 1.2 below) which allows obtaining an excess error
+that is independent of the variance of local stochastic gra-
+dients. This improves over the state-of-the-art analysis on
+robust distributed learning with strongly convex losses (Data
+& Diggavi, 2021), which induces a suboptimal excess er-
+ror. Besides, our analysis features a tighter dependence on
+heterogeneity in the excess error. Our lower bound on the
+cost of privacy (without robustness) also improves over the
+state-of-the-art (Lowy & Razaviyayn, 2023) as we make no
+assumptions on the interactivity of the algorithm and impose
+weaker conditions on the DP parameter ε (see Section 3).
+2Safe Distributed Stochastic Heavy Ball method, inspired from
+the optimization literature (Gadat et al., 2018).
+3Smallest Maximum Eigenvalue Averaging.
+2
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+1.2. Overview of Proof Techniques
+Lower bound. We prove our lower bound by reducing
+distributed mean estimation to centralized estimation of one-
+way marginals (i.e. row-wise averages). We distinguish
+cases depending on the presence of adversarial workers. In
+each case, we start with a distributed algorithm A whose
+interactions with each worker are (ε, δ)-DP, and then con-
+struct a centralized algorithm M using A. Depending on
+the case, we then use either the advanced composition the-
+orem (Dwork et al., 2014) or an indistinguishability argu-
+ment on the honest identities to relate the DP and utility
+guarantees of M to those of A. We conclude by applying
+lower bounds on centralized private estimation of one-way
+marginals (Steinke & Ullman, 2016) to M.
+Upper bound. To prove our matching upper bound, we
+present SAFE -DSHB , a privacy-preserving robust adapta-
+tion of DSGD. Our algorithm incorporates Polyak’s mo-
+mentum (Polyak, 1964) and a Gaussian mechanism (Dwork
+et al., 2014) at the worker level, as well as SMEA, our ro-
+bust aggregation rule at the server level. We identify a key
+property that, if satisfied by an aggregation rule, mitigates
+the curse of dimensionality that could impact the Gaussian
+mechanism. This property, called (f, κ)-robust averaging,
+requires the squared distance between the aggregate and the
+average of honest vectors to be bounded byκ times the spec-
+tral norm of the empirical covariance matrix of the honest
+vectors. Our aggregation rule, SMEA, satisfies (f, κ)-robust
+averaging for κ = O(f/n), while being agnostic to the statis-
+tical properties of honest inputs. Another critical element of
+our analysis is the tuning of the momentum coefficients to
+control the trade-off between the deviation from the true gra-
+dient and the reduction of the drift between honest workers’
+momentums. We achieve this through a novel Lyapunov
+function (a.k.a. potential function in optimization litera-
+ture (Schmidt et al., 2017)).
+1.3. Prior Work
+Only a handful of works addressed the interplay between
+DP and robustness in distributed ML. It was conjectured that
+ensuring both these requirements isimpractical, in the sense
+that it would require the batch size to grow with the model
+dimension (Guerraoui et al., 2021). However, the underly-
+ing analysis relied upon the criterion of (α, f)-Byzantine
+resilience (Blanchard et al., 2017), which has been recently
+shown to be a restrictive sufficient condition (Karimireddy
+et al., 2021). Subsequent works (Zhu & Ling, 2022; Xiang
+& Su, 2022; Ma et al., 2022) augmented the RSA learning
+algorithm (Li et al., 2019) with the sign-flipping or sign-
+Gaussian privacy mechanisms. However, these works only
+focus on per-step DP, and the presented upper bounds on
+the error of the proposed algorithms are loose.
+Another line of work targeted the specific learning problem
+of discrete distribution estimation subject to non-interactive
+local DP (Duchi et al., 2013) and robustness constraints.
+The bounds for this problem (Cheu et al., 2021; Acharya
+et al., 2021) are comparable to ours in the particular sce-
+nario where each worker holds a single data point and the
+algorithm is non-interactive (can query each worker once).
+Although a recent paper (Chhor & Sentenac, 2023) consid-
+ered a more general case where workers hold a batch of data
+points, the algorithm was still assumed non-interactive, and
+the data distribution identical for all the workers. It was also
+shown recently (Li et al., 2022) that local DP and robustness
+are disentangled when the adversarial workers corrupt the
+data before randomization only, which however need not
+be the case in general. The aforementioned works being
+tailored to non-interactive local DP, it is not clear how to
+extend their results to the general distributed ML setting.
+Significant attention was given to robust mean estimation
+under DP (Dwork & Lei, 2009; Liu et al., 2021b; Hopkins
+et al., 2022a; Liu et al., 2022). However, as we pointed out,
+the corresponding results do not readily apply to our setting,
+as they would require the server to be non-curious. More-
+over, robust mean estimation (Diakonikolas et al., 2019;
+Ashtiani & Liaw, 2022; Liu et al., 2022) typically assumes
+the honest inputs to be identically distributed, which need
+not be the case in a general distributed setting.
+1.4. Paper Outline
+Section 2 defines the problem and recalls some useful con-
+cepts. Sections 3 and 4 present our lower bound and the
+analysis of SAFE -DSHB . Section 5 presents SMEA and
+derives our matching upper bound. Section 6 discusses fu-
+ture work. We defer full proofs to appendices A-D, and
+experimental evaluation to Appendix E.
+2. Problem Statement
+We consider the classical server-based architecture compris-
+ing n workers w1, . . . , wn, and a central server. The workers
+hold local datasets D1, . . . ,Dn, each composed of m data
+points from an input space X , i.e., Di := {x(i)
+1 , . . . , x(i)
+m } ∈
+X m. For a given parameter vector θ ∈ Rd, a data point
+x ∈ Xhas a real-valued loss function ℓ(θ; x). The empiri-
+cal loss function for each worker wi is defined by
+L(θ; Di) := 1
+m
+X
+x∈Di
+ℓ(θ; x).
+The goal of the server is to compute an optimal parameter
+vector θ∗ minimizing the global empirical loss function
+L(θ; D1, . . . ,Dn) defined to be
+L(θ; D1, . . . ,Dn) := 1
+n
+nX
+i=1
+L(θ; Di).
+3
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+We assume that each loss L(·; Di) is differentiable, and that
+L is lower bounded, i.e., inf θ∈Rd L(θ; D1, . . . ,Dn) is finite.
+2.1. Robustness
+We consider a setting where at mostf out of n workers may
+be adversarial. Such workers may send arbitrary messages
+to the server, and need not follow the prescribed protocol.
+The identity of adversarial workers is a priori unknown to
+the server. Let H ⊆ {1, . . . , n}, with |H| = n − f. We
+define
+LH(θ) := L(θ; Di, i∈ H) := 1
+|H|
+X
+i∈H
+L(θ; Di).
+If H represents the indices of honest workers, the function
+LH is referred to as the global honest loss. An algorithm is
+deemed robust to adversarial workers if it enables the server
+to compute a minimum of the global honest loss (Gupta &
+Vaidya, 2020). Formally, we define robustness as follows.
+Definition 2.1 ((f, ϱ)-robust). A distributed algorithm is
+said to be (f, ϱ)-robust if it outputs a parameter ˆθ such that
+E
+h
+LH(ˆθ) − L∗
+i
+≤ ϱ,
+where L∗ := inf θ∈Rd LH(θ), and the expectation is taken
+over the randomness of the algorithm.
+In other words, an algorithm A is said to be (f, ϱ)-robust if,
+in every execution of A, the server outputs a ϱ-approximate
+minimizer of the honest loss, despite the presence of up
+to f adversarial workers. Note that (f, ϱ)-robustness is in
+general impossible for any ϱ when f ≥ n
+2 (Liu et al., 2021a).
+Thus, throughout the paper, we assume that f < n
+2 .
+2.2. Differential Privacy
+Each honest worker wi, i∈ H, aims to protect the privacy
+of their dataset Di against all other entities, i.e., the server
+and the other workers. To define our privacy requirement
+formally, we recall below the definition of item-level differ-
+ential privacy (DP) (Dwork et al., 2014), where two datasets
+are said to be adjacent if they differ by one item.
+Definition 2.2 ((ε, δ)-DP). Let ε ≥ 0, δ ∈ [0, 1]. A random-
+ized algorithm M : X m → Ysatisfies (ε, δ)-DP if for any
+adjacent datasets D, D′ ∈ Xm and subset S ⊆ Y, we have
+P[M(D) ∈ S] ≤ eε · P [M(D′) ∈ S] + δ. (2)
+We consider the server to be honest-but-curious, i.e., it
+follows the prescribed algorithm correctly, but may try
+to infer sensitive information about the workers’ datasets.
+Thus, the workers must enforce privacy locally at their end.
+We assume that the server can only query the dataset of a
+worker wi through a dedicated communication channel, and
+that there is no direct communication between the workers.
+Hence, for privacy in this context, we require the communi-
+cations between the server and each honest worker to satisfy
+the criterion of DP in (2). In our context, we formalize this
+property below, inspired from (Smith et al., 2017).
+Definition 2.3 ((ε, δ)-distributed DP). Let ε ≥ 0, δ ∈
+[0, 1]. Consider a randomized distributed algorithm A :
+X m×n → Y. Let Zi be a function that outputs the transcript
+of communications between the server and workerwi during
+the execution of A. Algorithm A is said to satisfy (ε, δ)-
+distributed DP if for all i ∈ H, Zi satisfies (ε, δ)-DP with
+respect to the dataset held by worker wi.
+The above criterion of distributed DP reduces to local
+DP (Kasiviswanathan et al., 2011; Duchi et al., 2013) when
+each local dataset comprises a single item (i.e., m = 1 ).
+Moreover, an algorithm satisfying(ε, δ)-distributed DP may
+be fully interactive, i.e., the queries made to the workers by
+the server may share arbitrary dependence (Kasiviswanathan
+et al., 2011). Hereafter, a distributed algorithm satisfying
+(ε, δ)-distributed DP is simply said to be (ε, δ)-DP.
+2.3. Assumptions
+Our results are derived under standard assumptions. First,
+we recall that data heterogeneity can be modeled following
+the assumption below (Karimireddy et al., 2020; 2022).
+Assumption 2.1 (Bounded heterogeneity) . There exists
+G <∞ such that for all θ ∈ Rd,
+1
+|H|
+X
+i∈H
+∥∇L(θ; Di) − ∇LH(θ)∥2 ≤ G2.
+To present the convergence guarantees of SAFE -DSHB , we
+make the following standard assumption on the variance of
+stochastic gradients (Bottou et al., 2018).
+Assumption 2.2 (Bounded variance). There exists σ <∞
+such that for each honest worker wi, i∈ H, and all θ ∈ Rd,
+1
+m
+X
+x∈Di
+∥∇θℓ(θ; x) − ∇L(θ; Di)∥2 ≤ σ2.
+Additionally, we also assume the point-wise gradients to
+be bounded, as usually done when analyzing differentially
+private ML algorithms to circumvent the complications due
+to clipping (Agarwal et al., 2018; Noble et al., 2022).
+Assumption 2.3 (Bounded gradient). There exists C <∞
+such that for all θ ∈ Rd, i ∈ H, and x ∈ Di,
+∥∇ℓ(θ; x)∥ ≤C.
+3. Lower Bound
+We now prove our lower bound on the error incurred by a
+(f, ϱ)-robust distributed algorithm, when ensuring (ε, δ)-DP.
+4
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+The main result is given in Theorem 3.1, whose full proof is
+deferred to Appendix A.5. To give insights about the proof,
+we detail three separate cases in sections 3.1, 3.2 and 3.3
+where we respectively study f = 0, f ≥ 1 but no privacy is
+enforced, and the adversarial setting f ≥ 1 with privacy.
+Theorem 3.1. Let X = Rd, ℓ = ∥·∥2, n ≥ 3, 0 ≤ f < n/2,
+m ≥ 1, and ε, δ∈ (0, 1). Consider arbitrary datasets
+D1, . . . ,Dn ∈ Xm such that Assumption 2.1 is satisfied
+with G ≥ 1. Let A : X m×n → Rd be an (ε, δ)-DP dis-
+tributed algorithm. Assume that ε ≤ 1/4
+p
+2n ln (m + 1),
+and that 2−m1−γ
+≤ nδ ≤ 1/8m1+γ for some γ ∈ (0, 1).
+For any ϱ ≤ f +1
+100(n−f ), if A is (f, ϱ)-robust, then
+ϱ = eΩ
+ d
+ε2nm2 + f
+n · 1
+ε2m2 + f
+n · G2
+
+.
+Comparison with prior work. Our lower bound general-
+izes that of the non-adversarial centralized case. Specif-
+ically, specializing our lower bound to the case n = 1
+yields the bound Ω
+  d
+ε2m2
+
+, which corresponds to the lower
+bound from centralized private ERM (Theorem V .5, Bassily
+et al. (2014))4. Second, we improve over a result from the
+non-adversarial private distributed learning literature (The-
+orem D.3, Lowy & Razaviyayn (2023)), where a similar
+lower bound is shown. While we consider distributed algo-
+rithm A as a black-box verifying (ε, δ)-DP (as per Defini-
+tion 2.3), the mentioned work imposes additional structure
+on A by assuming it to be round-based and to satisfy com-
+positionality, which essentially abstracts the class of round-
+based algorithms whose DP guarantees can be computed
+from advanced composition. Moreover, as the number of
+data points per workerm is typically greater than the number
+of workers n, our condition ε = O(1/√n log m) is arguably
+weaker than ε = O(1/m) in (Lowy & Razaviyayn, 2023).
+Discussion on assumptions. The assumptions on ε, δ, ϱare
+only needed to use the lower bound from (Steinke & Ullman,
+2016), which additionally features the log (1/δ) factor. One
+could use the same proof technique as in (Bassily et al.,
+2014) and remove these assumptions, at the expense of
+loosening the bound, e.g. an additional log m factor in the
+denominator of the first term appears.
+3.1. Case I: Non-adversarial Setting
+In this particular case, we assume all the workers to be
+honest, i.e., f = 0. However, the algorithm satisfies (ε, δ)-
+distributed DP. We show the following result.
+Proposition 3.1. Let n, m≥ 1, and ε, δ∈ (0, 1). Con-
+sider X = {± 1√
+d }d and ℓ = ∥·∥2. Consider an arbitrary
+(ε, δ)-DP distributed algorithm A : X m×n → Rd. Assume
+4Notice that the loss function in (Bassily et al., 2014) is not
+divided by the number of samples m.
+that ε ≤ 1/4
+p
+2n ln (m + 1) and that 2−m1−γ
+≤ nδ ≤
+1/8m1+γ for some γ ∈ (0, 1). For any ϱ ≤ 1/100, if A is
+(0, ϱ)-robust, then we must have
+ϱ = Ω
+ d
+ε2nm2
+
+.
+Sketch of proof. We consider the quadratic loss function.
+We derive a centralized DP algorithm M from A, and then
+reduce to private estimation of one-way marginals (Steinke
+& Ullman, 2016). Algorithm M runs A on n copies of
+the same dataset D ∈ Xm. Thus, M inherits the error
+guarantee ϱ from A on estimating the average ofD, but with
+a weaker (εn, δn)-DP guarantee, due to the composition
+of n adaptive (ε, δ)-DP queries (since A can query each
+of the n copies of D up to (ε, δ)-DP budget). Using the
+centralized DP lower bound from (Steinke & Ullman, 2016),
+we have ϱ = Ω(d log (1/δn)/ε2
+nm2). We bound εn and δn
+via advanced composition (Dwork et al., 2014) as follows:
+εn = O(ε
+p
+n log (1/δ′)) (provided that ε is small enough)
+and δn ≤ nδ + δ′, where δ′ is carefully chosen to ensure
+that log (1/δn)/ log (1/δ′) = Ω(1) (provided δ is small
+enough). Substituting the above values of εn and δn in the
+above lower bound on ϱ proves the proposition.
+3.2. Case II: No Privacy
+Finally, we adapt the lower bound from robust distributed
+ML (Karimireddy et al., 2022) to our robustness defini-
+tion (Definition 2.1) in Proposition 3.2 below.
+Proposition 3.2. Let Assumption 2.1 hold. Let n ≥ 1, 1 ≤
+f < n/2, and κ = 16f (n−2f )
+(n−f )2 . Consider X = {± G√
+κd }d
+and ℓ = ∥·∥2. If a distributed algorithm is (f, ϱ)-robust,
+then
+ϱ = Ω
+ f
+n · G2
+
+.
+3.3. Case III: Adversarial Setting
+We now state, in Proposition 3.3 below, the part of our bound
+where privacy and robustness are coupled.
+Proposition 3.3. Let n ≥ 3, 1 ≤ f < n/2, m ≥ 1,
+ε, δ ∈ (0, 1), and κ = 16f (n−2f )
+(n−f )2 . Consider X =
+{± 1√
+d }d ∪ {±1√
+κd }d and ℓ = ∥·∥2. Consider any (ε, δ)-
+DP distributed algorithm A : X m×n → Rd. Assume that
+2−o(m) ≤ δ ≤ 1/m1+Ω(1). For any ϱ ≤ f +1
+100(n−f ), if A is
+(f, ϱ)-robust, then we must have
+ϱ = Ω
+ f + 1
+n − f · log (1/δ)
+ε2m2
+
+.
+Sketch of proof. We consider the quadratic loss function,
+and reduce to the case d = 1 with a careful choice
+of datasets. We derive a centralized DP algorithm M
+5
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+from A, and then reduce to private estimation of one-way
+marginals (Steinke & Ullman, 2016). Algorithm M runs
+A on input dataset D ∈ Xm together with the remaining
+n − 1 datasets crafted as follows: f ‘adversarial’ datasets
+are filled with −1, while n − f − 1 ‘honest’ datasets are
+filled with +1. This ensures that, in all cases, M estimates
+the average of D better than at least an f-sized minority of
+datasets. Therefore, as A guarantees error ϱ on estimating
+the average of every group of n − f datasets’ averages (by
+Definition 2.1), we can bound the error of estimating the av-
+erage of D by ˜ϱ = Θ( n−f
+f +1 ϱ). We conclude by applying the
+aforementioned DP lower bound to M, which is (ε, δ)-DP
+and ensures error ˜ϱ in estimating the average of D.
+4. Our Algorithm: S AFE -DSHB
+We prove in this section that our lower bound is tight.
+Specifically, we present a new distributed algorithm, SAFE -
+DSHB , which yields a matching upper bound. Upon de-
+scribing SAFE -DSHB in Section 4.1, we analyze its privacy
+in Section 4.2 and convergence guarantees in Section 4.3
+for smooth strongly convex and non-convex loss functions.
+4.1. Description of SAFE -DSHB
+Similar to DSGD, SAFE -DSHB is an iterative algorithm
+where the server initiates each iteration (or step) t ≥ 0
+by broadcasting its current model parameter vector θt to
+all the workers. The initial parameter vector θ0 is chosen
+arbitrarily by the server. Upon receiving θt from the server,
+each honest worker wi samples a mini-batch S(i)
+t of b ≤
+m data points randomly from its local dataset Di without
+replacement. Then, wi computes the gradients ∇ℓ(θt; x)
+for all x ∈ S(i)
+t , clips each of them using a threshold value
+C and averages the clipped gradients to obtain a gradient
+estimate g(i)
+t . Specifically,
+g(i)
+t = 1
+b
+X
+x∈S(i)
+t
+∇ℓ(θt; x) · min
+
+1, C
+∥∇ℓ(θt; x)∥
+
+.
+To protect the privacy of its data, wi then obfuscates g(i)
+t
+with Gaussian noise to obtain ˜g(i)
+t , i.e.,
+˜g(i)
+t = g(i)
+t + ξ(i)
+t ; ξ(i)
+t ∼ N
+ 
+0, σ2
+DPId
+
+,
+where Id denotes the identity matrix of dimension d × d,
+and N
+ 
+0, σ2
+DPId
+
+denotes a d-dimensional Gaussian dis-
+tribution with mean 0 and covariance σ2
+DPId. Finally, wi
+uses this noisy gradient to update its local Polyak’s momen-
+tum (Polyak, 1964) denoted by m(i)
+t , which is then sent to
+the server. Specifically, for t ≥ 1,
+m(i)
+t = βt−1m(i)
+t−1 + (1 − βt−1)˜g(i)
+t ,
+Algorithm 1 SAFE -DSHB
+Initialization: Initial model θ0, initial momentum m(i)
+0 = 0
+for each honest worker wi, robust aggregation F , DP noise
+σDP, batch size b, clipping threshold C, learning rates {γt},
+momentum coefficients {βt}, and total number of steps T .
+1: for t = 0 . . . T− 1 do
+2: Server broadcasts θt to all workers.
+3: for every honest worker wi, i∈ H, in parallel do
+4: Sample a mini-batch S(i)
+t of size b at random from
+Di without replacement.
+5: Clip and average the mini-batch gradients:
+g(i)
+t = 1
+b
+X
+x∈S(i)
+t
+Clip (∇ℓ(θt; x); C) ,
+where Clip(g; C) := g · min {1, C/∥g∥}.
+6: Add noise to the mini-batch average gradient:
+˜g(i)
+t = g(i)
+t + ξ(i)
+t ; ξ(i)
+t ∼ N(0, σ2
+DPId).
+7: Send m(i)
+t = βt−1m(i)
+t−1 + (1 − βt−1)˜g(i)
+t .
+8: end for
+9: Server aggregates: Rt = F (m(1)
+t , . . . , m(n)
+t ).
+10: Server updates the model: θt+1 = θt − γtRt.
+11: end for
+12: return ˆθ uniformly sampled from {θ0, . . . , θT −1}.
+where m(i)
+0 = 0 by convention, and βt ∈ [0, 1] is referred
+to as the momentum coefficient. Recall that if worker wi
+is adversarial, then it may send an arbitrary value for its
+momentum m(i)
+t . Upon receiving the local momentums
+from all the workers, the server aggregates them using F to
+obtain Rt = F (m(1)
+t , . . . , m(n)
+t ). Finally, the server updates
+the model θt to
+θt+1 = θt − γt Rt
+where γt ≥ 0 is the learning rate at step t. The above
+procedure is repeated for a total of T steps, after which
+the server outputs ˆθ which is sampled uniformly from the
+set {θ0, . . . , θT −1}. The complete learning procedure is
+summarized in Algorithm 1.
+4.2. Privacy of SAFE -DSHB
+We present below the DP guarantee of SAFE -DSHB . To
+state closed-form expressions, we will assume that the batch
+size b is sufficiently small compared to m the number of
+data points per worker. This assumption is only made for
+pedagogical reasons, but is not necessary for the privacy
+analysis to hold. In particular, the expressions that result
+from removing this assumption are difficult to read and
+interpret (Wang et al., 2019a). We defer the full DP analysis
+6
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+without this assumption to Appendix C.
+Theorem 4.1. Consider Algorithm 1. Let ε >0, δ∈ (0, 1)
+be such that ε ≤ log (1/δ). There exists a constant k >0
+such that, for a sufficiently small batch size b, when σDP ≥
+k · 2C
+b max {1,
+b
+√
+T log (1/δ)
+mε }, Algorithm 1 is (ε, δ)-DP .
+4.3. Convergence of SAFE -DSHB
+To present the convergence ofSAFE -DSHB we first intro-
+duce below a criterion, namely (f, κ)-robust averaging, for
+an aggregation rule F that proves crucial in our analysis.
+Definition 4.1. Let n ≥ 1, 0 ≤ f < n/2 and κ ≥ 0. An ag-
+gregation rule F is said to be (f, κ)-robust averaging if for
+any vectors x1, . . . , xn ∈ Rd, and any set S ⊆ {1, . . . , n}
+of size n − f, the output ˆx = F (x1, . . . , xn) satisfies
+∥ˆx − xS∥2 ≤ κ · λmax
+ 
+1
+|S|
+X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+,
+where xS := 1
+|S|
+P
+i∈S xi and λmax denotes the maximum
+eigenvalue. We refer to κ as the robustness coefficient of F .
+Comparison to prior work. Our robustness criterion
+is stronger than existing ones: (f, κ)-robustness (Allouah
+et al., 2023), (f, λ)-resilience (Farhadkhani et al., 2022)
+and (c, δmax)-ARAgg (Karimireddy et al., 2022). The
+last two works bound the error with the diameter of hon-
+est inputs, i.e., maximum squared pairwise distance. The
+latter is greater than the empirical variance (bound used
+in (f, κ)-robustness (Allouah et al., 2023)), which itself
+is greater than the maximum eigenvalue of the empirical
+covariance (that we use) in high-dimensional spaces (i.e.,
+d >1). In fact, the tight analysis of aggregation functions
+(e.g., trimmed mean, Krum) conducted in (Allouah et al.,
+2023) through the lens of (f, κ)-robustness directly im-
+plies our (f, κ′)-robust averaging criterion, with κ′ ≤ d · κ.
+However, aggregation rules that are optimal w.r.t. (f, κ)-
+robustness (Allouah et al., 2023) may be suboptimal in our
+context, as we need to suppress the dimension dependence
+of κ for our tight bounds.
+Tighter heterogeneity metric. We introduce a new metric
+Gcov for quantifying the heterogeneity between the local
+gradients of honest workers’ loss functions, which is ar-
+guably tighter than G defined in Section 3.2. Specifically,
+G2
+cov := sup
+θ∈Rd
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇L(θ; Di) − ∇LH(θ)⟩2 .
+Note that G2
+cov above represents an upper bound on the
+spectral norm of the empirical covariance of honest gra-
+dients, which is smaller than their empirical variance G2.
+Moreover, if the gradients have a well-conditioned empirical
+covariance, then Gcov has weaker dependence on d.
+We state our convergence result below in Theorem 4.2.
+Essentially, we analyze the convergence of SAFE -DSHB
+with an (f, κ)-robust averaging aggregation F , under as-
+sumptions 2.2 and 2.3, for smooth strongly convex and
+non-convex loss functions. We use the following notation:
+L∗ = inf
+θ∈Rd
+LH(θ), L0 = LH(θ0) − L∗, a1 = 240,
+a2 = 480, a3 = 5760, and a4 = 270. (3)
+Theorem 4.2. Suppose that assumptions 2.2 and 2.3 hold
+true, and that LH is L-smooth. Let F satisfy the condition
+of (f, κ)-robust averaging. We let
+σ2 = σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP
+
+1 + d
+n − f
+
+,
+where σ2
+b = 2(1− b
+m ) σ2
+b . Consider Algorithm 1 with T ≥ 1,
+the learning rates γt and momentum coefficients βt spec-
+ified below. We prove that the following holds, where the
+expectation E [·] is over the randomness of the algorithm.
+1. Strongly convex: Assume that LH is µ-strongly convex.
+If γt = 10
+µ(t+a1 L
+µ ) and βt = 1 − 24Lγt then
+E [LH(θT ) − L∗] ≤ 4a1κG2
+cov
+µ + 2a2
+1Lσ2
+µ2T + 2a2
+1L2L0
+µ2T 2 .
+2. Non-convex: If γ = min
+n
+1
+24L ,
+√a4L0
+2σ√a3LT
+o
+and βt =
+1 − 24Lγ then
+E
+h
+∥∇LH(ˆθ)∥2
+i
+≤ a2κG2
+cov +
+√a3a4LL0σ√
+T
++ a4LL0
+T .
+Sketch of proof. We show that at each step t, the descent
+LH(θt+1) − LH(θt) can be bounded from above. Doing so
+is however non-trivial, as one needs to consider two conflict-
+ing effects: (i) the drift between honest momentums, and (ii)
+the deviation between the average honest momentum and
+the true gradient. To control this trade-off, we use increasing
+momentum coefficients and decreasing learning rates, and
+introduce an adapted Lyapunov function Vt. Ignoring the
+constants, the function can be written as follows:
+Vt := (t + K)2 · E
+
+LH(θt) − L∗ + 1
+L δt + κ
+L ∆t
+
+,
+where δt := ∥mt − ∇LH(θt)∥2 represents the de-
+viation of the momentum from the true gradient,
+∆t := λmax
+
+1
+|H|
+P
+i∈H(m(i)
+t − mt)(m(i)
+t − mt)⊤
+
+repre-
+sents the drift between the honest momentums, and K := L
+µ
+denotes the condition number of LH.
+Remark 4.3. Our strongly convex upper bound also holds
+true for the larger class of smooth µ-PL functions (Karimi
+et al., 2016), which includes some non-convex functions.
+7
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Comparison to prior work. Our convergence rate in
+O
+  1
+T
+
+for strongly convex losses is optimal in the non-
+adversarial and privacy-free setting (Agarwal et al., 2009).
+We improve over the state-of-the-art strongly convex analy-
+sis (Data & Diggavi, 2021), without privacy, which features
+a suboptimal excess term proportional to the stochastic noise
+σ2. Essentially, we remove this dependency on σ2 thanks to
+the use of momentum, although our convergence rate is in
+O
+  1
+T
+
+instead of being exponential as in (Data & Diggavi,
+2021). In fact, making σ2 vanish at a rate 1
+T is crucial in our
+setting, as the DP noise σ2
+DP scales with T (Theorem 4.1).
+We also improve over the state-of-the-art non-convex analy-
+sis (Farhadkhani et al., 2022). Namely, our analysis features
+a tighter characterization of the data heterogeneity Gcov,
+instead of the traditional heterogeneity metric G.
+5. Tight Upper Bound
+We present a new aggregation rule namedSMEA (Smallest
+Maximum Eigenvalue Averaging) in Section 5.1, and show
+that it yields a tight upper bound in Section 5.2.
+5.1. Robust Aggregation: SMEA
+Consider a set of n vectors x1, . . . , xn. Let S∗ be an arbi-
+trary subset of [n] of size n − f with the smallest empirical
+maximum eigenvalue, i.e.,
+S∗ ∈ argmin
+S⊆[n]
+|S|=n−f
+λmax
+ 
+1
+|S|
+X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+.
+SMEA outputs the average of the inputs in S∗, i.e.,
+SMEA(x1, . . . , xn) := 1
+|S∗|
+X
+i∈S∗
+xi.
+Note that SMEA draws inspiration from the minimum
+diameter averaging method (El Mhamdi et al., 2018),
+which itself is reminiscent of the minimal volume ellipsoid
+method (Rousseeuw, 1985). We show that our aggregation
+rule satisfies the criterion of (f, κ)-robust averaging.
+Proposition 5.1. Let f < n/2. SMEA is (f, κ)-robust
+averaging with
+κ = 4f
+n − f
+
+1 + f
+n − 2f
+2
+.
+Proposition 5.1 implies that, when n ≥ (2 + η)f for some
+constant η > 0, SMEA satisfies (f, κ)-robust averaging
+with κ = O(f/n). Importantly, SMEA satisfies this high-
+dimensional robustness property while being agnostic to the
+statistical properties of the valid inputs, knowledge of which
+is key in designing efficient robust estimators (Diakonikolas
+et al., 2017; Steinhardt et al., 2018) (see Appendix B.2).
+Computational complexity. However, as SMEA involves
+computing the maximum eigenvalue of d-dimensional sym-
+metric matrices, which is in O
+ 
+d3
+, the worst-case com-
+putational complexity of SMEA is O
+  n
+f
+
+· d3
+, which is
+exponential in f. This shortcoming of our method should
+be addressed in the future.
+5.2. Upper Bound
+Upon combining the results in theorems 4.1, 4.2, Proposi-
+tion 5.1, and ignoring the vanishing terms in T , we obtain
+Corollary 5.1 that quantifies the privacy-robustness-utility
+trade-off of SAFE -DSHB using the SMEA aggregation rule.
+Corollary 5.1. Consider Algorithm 1 with aggregation
+F = SMEA , under the strongly convex setting of Theo-
+rem 4.2. Suppose that assumptions 2.1, 2.2, 2.3 hold, and
+that n ≥ (2 + η)f, for some absolute constant η > 0.
+Let ε > 0, δ∈ (0, 1) be such that ε ≤ log (1/δ). Then,
+there exists a constant k > 0 such that, if σDP = k ·
+2C/b max {1, b
+√
+T log (1/δ)/εm}, then Algorithm 1 is (ε, δ)-
+DP and (f, ϱ)-robust where
+ϱ = O
+ d log (1/δ)
+ε2nm2 + f
+n · log (1/δ)
+ε2m2 + f
+n G2
+
+.
+Tightness. Our upper bound is tight, in the sense that
+it matches the lower bound, up to the logarithmic factor
+log (1/δ) in the first term. We believe that it is not possible
+to improve upon our upper bound in general, but rather that
+it may be possible to improve our lower bound in Proposi-
+tion 3.1, by including the factor log (1/δ). This could be
+done, for example, by assuming the stronger R´enyi DP prop-
+erty (Mironov, 2017), satisfied by the Gaussian mechanism,
+instead of relying on the advanced composition theorem.
+6. Conclusions and Future Work
+Applying machine learning in sensitive public domains re-
+quires algorithms that protect data privacy, while being ro-
+bust to faults and adversarial behaviors. We present the first
+tight analysis of the error incurred by any distributed ML
+algorithm ensuring robustness to adversarial workers and
+differential privacy for honest machines’ data against any
+other curious entity. Our algorithm SAFE -DSHB yields a
+tight upper bound for the class of smooth strongly convex
+problems, up to a logarithmic factor. Proving a tighter lower
+bound on the privacy cost, featuring the usual log (1/δ)
+factor, is an appealing goal. Proving similar bounds for
+the non-strongly convex class is also of interest. Also, in
+Appendix E, we conduct small-scale experiments showing
+encouraging results using our aggregation rule SMEA (as
+well as other aggregation rules). Yet, while SMEA is simple
+and agnostic to the statistical properties of honest data, it
+has a high computational complexity. Deploying it on larger
+8
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+scale systems goes through designing variants with lower
+complexity, and this is also an interesting research direction.
+Acknowledgements
+This work was supported in part by SNSF grants
+200021 200477 and 200021 182542, and an EPFL-
+Ecocloud postdoctoral grant. The authors are thankful to
+the anonymous reviewers for their constructive comments.
+References
+Abadi, M., Chu, A., Goodfellow, I., McMahan, H. B.,
+Mironov, I., Talwar, K., and Zhang, L. Deep learning
+with differential privacy. InProceedings of the 2016 ACM
+SIGSAC conference on computer and communications
+security, pp. 308–318, 2016.
+Acharya, J., Sun, Z., and Zhang, H. Robust testing and
+estimation under manipulation attacks. In International
+Conference on Machine Learning , pp. 43–53. PMLR,
+2021.
+Agarwal, A., Wainwright, M. J., Bartlett, P., and Raviku-
+mar, P. Information-theoretic lower bounds on the oracle
+complexity of convex optimization. Advances in Neural
+Information Processing Systems, 22, 2009.
+Agarwal, N., Suresh, A. T., Yu, F. X. X., Kumar, S., and
+McMahan, B. cpsgd: Communication-efficient and
+differentially-private distributed sgd. Advances in Neural
+Information Processing Systems, 31, 2018.
+Allen-Zhu, Z., Ebrahimianghazani, F., Li, J., and Alistarh,
+D. Byzantine-resilient non-convex stochastic gradient
+descent. In International Conference on Learning Repre-
+sentations, 2020.
+Allouah, Y ., Farhadkhani, S., Guerraoui, R., Gupta, N.,
+Pinot, R., and Stephan, J. Fixing by mixing: A recipe
+for optimal byzantine ml under heterogeneity. In Interna-
+tional Conference on Artificial Intelligence and Statistics,
+pp. 1232–1300. PMLR, 2023.
+Arora, R., Bassily, R., Gonz´alez, T., Guzm´an, C., Menart,
+M., and Ullah, E. Faster rates of convergence to station-
+ary points in differentially private optimization. arXiv
+preprint arXiv:2206.00846, 2022.
+Ashtiani, H. and Liaw, C. Private and polynomial time algo-
+rithms for learning gaussians and beyond. In Conference
+on Learning Theory, pp. 1075–1076. PMLR, 2022.
+Baruch, M., Baruch, G., and Goldberg, Y . A little is enough:
+Circumventing defenses for distributed learning. In Ad-
+vances in Neural Information Processing Systems 32:
+Annual Conference on Neural Information Processing
+Systems 2019, 8-14 December 2019, Long Beach, CA,
+USA, 2019.
+Bassily, R., Smith, A., and Thakurta, A. Private empirical
+risk minimization: Efficient algorithms and tight error
+bounds. In 2014 IEEE 55th annual symposium on foun-
+dations of computer science, pp. 464–473. IEEE, 2014.
+Bertsekas, D. and Tsitsiklis, J. Parallel and distributed com-
+putation: numerical methods. Athena Scientific, 2015.
+Blanchard, P., El Mhamdi, E. M., Guerraoui, R., and Stainer,
+J. Machine learning with adversaries: Byzantine tolerant
+gradient descent. In Guyon, I., Luxburg, U. V ., Bengio, S.,
+Wallach, H., Fergus, R., Vishwanathan, S., and Garnett,
+R. (eds.), Advances in Neural Information Processing
+Systems 30, pp. 119–129. Curran Associates, Inc., 2017.
+Bonawitz, K., Ivanov, V ., Kreuter, B., Marcedone, A.,
+McMahan, H. B., Patel, S., Ramage, D., Segal, A., and
+Seth, K. Practical secure aggregation for federated learn-
+ing on user-held data. arXiv preprint arXiv:1611.04482,
+2016.
+Bottou, L., Curtis, F. E., and Nocedal, J. Optimization
+methods for large-scale machine learning. Siam Review,
+60(2):223–311, 2018.
+Bun, M., Ullman, J., and Vadhan, S. Fingerprinting codes
+and the price of approximate differential privacy. In
+Proceedings of the forty-sixth annual ACM symposium
+on Theory of computing, pp. 1–10, 2014.
+Cheu, A., Smith, A., and Ullman, J. Manipulation attacks
+in local differential privacy. In 2021 IEEE Symposium on
+Security and Privacy (SP), pp. 883–900. IEEE, 2021.
+Chhor, J. and Sentenac, F. Robust estimation of discrete
+distributions under local differential privacy. In Interna-
+tional Conference on Algorithmic Learning Theory, pp.
+411–446. PMLR, 2023.
+Choudhury, O., Gkoulalas-Divanis, A., Salonidis, T., Sylla,
+I., Park, Y ., Hsu, G., and Das, A. Differential privacy-
+enabled federated learning for sensitive health data.arXiv
+preprint arXiv:1910.02578, 2019.
+Data, D. and Diggavi, S. Byzantine-resilient high-
+dimensional sgd with local iterations on heterogeneous
+data. In Meila, M. and Zhang, T. (eds.), Proceed-
+ings of the 38th International Conference on Machine
+Learning, volume 139 of Proceedings of Machine
+Learning Research, pp. 2478–2488. PMLR, 18–24 Jul
+2021. URL https://proceedings.mlr.press/
+v139/data21a.html.
+Dean, J., Corrado, G., Monga, R., Chen, K., Devin, M., Mao,
+M., Ranzato, M. a., Senior, A., Tucker, P., Yang, K., Le,
+9
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Q., and Ng, A. Large scale distributed deep networks. In
+Pereira, F., Burges, C. J. C., Bottou, L., and Weinberger,
+K. Q. (eds.), Advances in Neural Information Processing
+Systems, volume 25. Curran Associates, Inc., 2012.
+Diakonikolas, I., Kamath, G., Kane, D. M., Li, J., Moitra,
+A., and Stewart, A. Being robust (in high dimensions)
+can be practical. In International Conference on Machine
+Learning, pp. 999–1008. PMLR, 2017.
+Diakonikolas, I., Kamath, G., Kane, D., Li, J., Moitra, A.,
+and Stewart, A. Robust estimators in high-dimensions
+without the computational intractability. SIAM Journal
+on Computing, 48(2):742–864, 2019.
+Duchi, J. C., Jordan, M. I., and Wainwright, M. J. Local
+privacy and statistical minimax rates. In 2013 IEEE 54th
+Annual Symposium on Foundations of Computer Science,
+pp. 429–438. IEEE, 2013.
+Dwork, C. and Lei, J. Differential privacy and robust
+statistics. In Proceedings of the Forty-First Annual
+ACM Symposium on Theory of Computing , STOC ’09,
+pp. 371–380, New York, NY , USA, 2009. Associa-
+tion for Computing Machinery. ISBN 9781605585062.
+doi: 10.1145/1536414.1536466. URL https://doi.
+org/10.1145/1536414.1536466.
+Dwork, C., Roth, A., et al. The algorithmic foundations of
+differential privacy. Foundations and Trends® in Theo-
+retical Computer Science, 9(3–4):211–407, 2014.
+El Mhamdi, E. M., Guerraoui, R., and Rouault, S. The
+hidden vulnerability of distributed learning in Byzan-
+tium. In Dy, J. and Krause, A. (eds.), Proceedings of
+the 35th International Conference on Machine Learn-
+ing, volume 80 of Proceedings of Machine Learn-
+ing Research, pp. 3521–3530. PMLR, 10–15 Jul 2018.
+URL https://proceedings.mlr.press/v80/
+mhamdi18a.html.
+EU. Regulation (eu) 2016/679 of 27 april 2016 on the pro-
+tection of natural persons with regard to the processing of
+personal data and on the free movement of such data, and
+repealing directive 95/46/ec. Technical report, European
+Parliament and European Council, 2016.
+Farhadkhani, S., Guerraoui, R., Gupta, N., Pinot, R., and
+Stephan, J. Byzantine machine learning made easy by
+resilient averaging of momentums. In Chaudhuri, K.,
+Jegelka, S., Song, L., Szepesvari, C., Niu, G., and Sabato,
+S. (eds.), Proceedings of the 39th International Confer-
+ence on Machine Learning, volume 162 of Proceedings
+of Machine Learning Research, pp. 6246–6283. PMLR,
+17–23 Jul 2022. URLhttps://proceedings.mlr.
+press/v162/farhadkhani22a.html.
+Feng, J., Xu, H., and Mannor, S. Distributed robust learning,
+2015.
+Fredrikson, M., Jha, S., and Ristenpart, T. Model in-
+version attacks that exploit confidence information and
+basic countermeasures. In Proceedings of the 22nd
+ACM SIGSAC Conference on Computer and Commu-
+nications Security , CCS ’15, pp. 1322–1333, New
+York, NY , USA, 2015. Association for Computing
+Machinery. ISBN 9781450338325. doi: 10.1145/
+2810103.2813677. URL https://doi.org/10.
+1145/2810103.2813677.
+Gadat, S., Panloup, F., and Saadane, S. Stochastic heavy
+ball. Electronic Journal of Statistics, 12(1):461 – 529,
+2018. doi: 10.1214/18-EJS1395. URL https://doi.
+org/10.1214/18-EJS1395.
+Georgiev, K. and Hopkins, S. B. Privacy induces robustness:
+Information-computation gaps and sparse mean estima-
+tion. In Oh, A. H., Agarwal, A., Belgrave, D., and Cho,
+K. (eds.), Advances in Neural Information Processing
+Systems, 2022. URL https://openreview.net/
+forum?id=g-OkeNXPy-X.
+Guerraoui, R., Gupta, N., Pinot, R., Rouault, S., and
+Stephan, J. Differential privacy and Byzantine re-
+silience in sgd: Do they add up? In Proceed-
+ings of the 2021 ACM Symposium on Principles of
+Distributed Computing, PODC’21, pp. 391–401, New
+York, NY , USA, 2021. Association for Computing
+Machinery. ISBN 9781450385480. doi: 10.1145/
+3465084.3467919. URL https://doi.org/10.
+1145/3465084.3467919.
+Gupta, N. and Vaidya, N. H. Fault-tolerance in distributed
+optimization: The case of redundancy. In Proceedings of
+the 39th Symposium on Principles of Distributed Com-
+puting, pp. 365–374, 2020.
+Gupta, N., Liu, S., and Vaidya, N. Byzantine fault-tolerant
+distributed machine learning with norm-based compara-
+tive gradient elimination. In 2021 51st Annual IEEE/I-
+FIP International Conference on Dependable Systems
+and Networks Workshops (DSN-W), pp. 175–181. IEEE,
+2021.
+Hitaj, B., Ateniese, G., and Perez-Cruz, F. Deep models
+under the gan: Information leakage from collaborative
+deep learning. In Proceedings of the 2017 ACM SIGSAC
+Conference on Computer and Communications Security,
+CCS ’17, pp. 603–618, New York, NY , USA, 2017. Asso-
+ciation for Computing Machinery. ISBN 9781450349468.
+doi: 10.1145/3133956.3134012. URL https://doi.
+org/10.1145/3133956.3134012.
+10
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Hopkins, S. B., Kamath, G., and Majid, M. Efficient mean
+estimation with pure differential privacy via a sum-of-
+squares exponential mechanism. In Proceedings of the
+54th Annual ACM SIGACT Symposium on Theory of Com-
+puting, pp. 1406–1417, 2022a.
+Hopkins, S. B., Kamath, G., Majid, M., and Narayanan,
+S. Robustness implies privacy in statistical estimation.
+arXiv preprint arXiv:2212.05015, 2022b.
+Hu, R., Guo, Y ., Li, H., Pei, Q., and Gong, Y . Personalized
+federated learning with differential privacy.IEEE Internet
+of Things Journal, 7(10):9530–9539, 2020.
+Karimi, H., Nutini, J., and Schmidt, M. Linear conver-
+gence of gradient and proximal-gradient methods under
+the polyak-łojasiewicz condition. In Joint European con-
+ference on machine learning and knowledge discovery in
+databases, pp. 795–811. Springer, 2016.
+Karimireddy, S. P., Kale, S., Mohri, M., Reddi, S., Stich, S.,
+and Suresh, A. T. Scaffold: Stochastic controlled averag-
+ing for federated learning. In International Conference
+on Machine Learning, pp. 5132–5143. PMLR, 2020.
+Karimireddy, S. P., He, L., and Jaggi, M. Learning from
+history for Byzantine robust optimization. International
+Conference On Machine Learning, Vol 139, 139, 2021.
+Karimireddy, S. P., He, L., and Jaggi, M. Byzantine-robust
+learning on heterogeneous datasets via bucketing. In
+International Conference on Learning Representations,
+2022. URL https://openreview.net/forum?
+id=jXKKDEi5vJt.
+Kasiviswanathan, S. P., Lee, H. K., Nissim, K., Raskhod-
+nikova, S., and Smith, A. What can we learn privately?
+SIAM Journal on Computing, 40(3):793–826, 2011.
+Lamport, L., Shostak, R., and Pease, M. The Byzan-
+tine generals problem. ACM Trans. Program. Lang.
+Syst., 4(3):382–401, jul 1982. ISSN 0164-0925. doi:
+10.1145/357172.357176. URL https://doi.org/
+10.1145/357172.357176.
+Li, L., Xu, W., Chen, T., Giannakis, G. B., and Ling, Q.
+RSA: Byzantine-robust stochastic aggregation methods
+for distributed learning from heterogeneous datasets. In
+Proceedings of the AAAI Conference on Artificial Intelli-
+gence, pp. 1544–1551, 2019.
+Li, M., Berrett, T. B., and Yu, Y . On robustness and local
+differential privacy. arXiv preprint arXiv:2201.00751,
+2022.
+Liu, S., Gupta, N., and Vaidya, N. H. Approximate Byzan-
+tine fault-tolerance in distributed optimization. In Pro-
+ceedings of the 2021 ACM Symposium on Principles of
+Distributed Computing, PODC’21, pp. 379–389, New
+York, NY , USA, 2021a. Association for Computing Ma-
+chinery. ISBN 9781450385480. doi: 10.1145/3465084.
+3467902.
+Liu, X., Kong, W., Kakade, S., and Oh, S. Robust and dif-
+ferentially private mean estimation. Advances in Neural
+Information Processing Systems, 34:3887–3901, 2021b.
+Liu, X., Kong, W., and Oh, S. Differential privacy and
+robust statistics in high dimensions. In Conference on
+Learning Theory, pp. 1167–1246. PMLR, 2022.
+Lowy, A. and Razaviyayn, M. Private federated learn-
+ing without a trusted server: Optimal algorithms for
+convex losses. In The Eleventh International Confer-
+ence on Learning Representations, 2023. URL https:
+//openreview.net/forum?id=TVY6GoURrw.
+Lowy, A., Ghafelebashi, A., and Razaviyayn, M. Private
+non-convex federated learning without a trusted server.
+In International Conference on Artificial Intelligence and
+Statistics, pp. 5749–5786. PMLR, 2023.
+Ma, X., Sun, X., Wu, Y ., Liu, Z., Chen, X., and Dong, C.
+Differentially private Byzantine-robust federated learning.
+IEEE Transactions on Parallel and Distributed Systems,
+2022.
+Melis, L., Song, C., Cristofaro, E. D., and Shmatikov, V . Ex-
+ploiting unintended feature leakage in collaborative learn-
+ing. In 2019 IEEE Symposium on Security and Privacy,
+SP 2019, San Francisco, CA, USA, May 19-23, 2019, pp.
+691–706. IEEE, 2019. doi: 10.1109/SP.2019.00029. URL
+https://doi.org/10.1109/SP.2019.00029.
+Mironov, I. R´enyi differential privacy. In 2017 IEEE 30th
+computer security foundations symposium (CSF), pp. 263–
+275. IEEE, 2017.
+Nesterov, Y . et al.Lectures on convex optimization, volume
+137. Springer, 2018.
+Noble, M., Bellet, A., and Dieuleveut, A. Differentially pri-
+vate federated learning on heterogeneous data. In Interna-
+tional Conference on Artificial Intelligence and Statistics,
+pp. 10110–10145. PMLR, 2022.
+Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J.,
+Chanan, G., Killeen, T., Lin, Z., Gimelshein, N., Antiga,
+L., et al. Pytorch: An imperative style, high-performance
+deep learning library. Advances in neural information
+processing systems, 32, 2019.
+Pauwels, E. Lecture notes: Statistics, optimization and
+algorithms in high dimension, 2020.
+11
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Phong, L. T., Aono, Y ., Hayashi, T., Wang, L., and Moriai,
+S. Privacy-preserving deep learning: Revisited and en-
+hanced. In Batten, L., Kim, D. S., Zhang, X., and Li, G.
+(eds.), Applications and Techniques in Information Secu-
+rity, pp. 100–110, Singapore, 2017. Springer Singapore.
+ISBN 978-981-10-5421-1.
+Polyak, B. Some methods of speeding up the convergence
+of iteration methods. USSR Computational Mathemat-
+ics and Mathematical Physics, 4(5):1–17, 1964. ISSN
+0041-5553. doi: https://doi.org/10.1016/0041-5553(64)
+90137-5.
+Rice, J. A. Mathematical statistics and data analysis. Cen-
+gage Learning, 2006.
+Rigollet, P. and H ¨utter, J.-C. High dimensional statistics.
+Lecture notes for course 18S997, 813(814):46, 2015.
+Rousseeuw, P. J. Multivariate estimation with high break-
+down point. Mathematical statistics and applications, 8
+(37):283–297, 1985.
+Schmidt, M., Le Roux, N., and Bach, F. Minimizing finite
+sums with the stochastic average gradient. Mathematical
+Programming, 162(1):83–112, 2017.
+Sheller, M. J., Edwards, B., Reina, G. A., Martin, J., Pati, S.,
+Kotrotsou, A., Milchenko, M., Xu, W., Marcus, D., Colen,
+R. R., et al. Federated learning in medicine: facilitating
+multi-institutional collaborations without sharing patient
+data. Scientific reports, 10(1):1–12, 2020.
+Shokri, R., Stronati, M., and Shmatikov, V . Membership
+inference attacks against machine learning models.CoRR,
+abs/1610.05820, 2016.
+Smith, A., Thakurta, A., and Upadhyay, J. Is interaction nec-
+essary for distributed private learning? In2017 IEEE Sym-
+posium on Security and Privacy (SP), pp. 58–77. IEEE,
+2017.
+Steinhardt, J. Robust learning: Information theory and
+algorithms. Stanford University, 2018.
+Steinhardt, J., Charikar, M., and Valiant, G. Resilience: A
+criterion for learning in the presence of arbitrary outliers.
+In 9th Innovations in Theoretical Computer Science Con-
+ference (ITCS 2018). Schloss Dagstuhl-Leibniz-Zentrum
+fuer Informatik, 2018.
+Steinke, T. and Ullman, J. Between pure and approximate
+differential privacy. Journal of Privacy and Confidential-
+ity, 7(2), 2016.
+Su, L. and Vaidya, N. H. Fault-tolerant multi-agent op-
+timization: optimal iterative distributed algorithms. In
+Proceedings of the 2016 ACM symposium on principles
+of distributed computing, pp. 425–434, 2016.
+Vershynin, R. Introduction to the non-asymptotic analysis
+of random matrices. arXiv preprint arXiv:1011.3027 ,
+2010.
+Wang, Y .-X., Balle, B., and Kasiviswanathan, S. P. Subsam-
+pled r ´enyi differential privacy and analytical moments
+accountant. In The 22nd International Conference on Ar-
+tificial Intelligence and Statistics, pp. 1226–1235. PMLR,
+2019a.
+Wang, Z., Mengkai, S., Zhang, Z., Song, Y ., Wang, Q., and
+Qi, H. Beyond inferring class representatives: User-level
+privacy leakage from federated learning. pp. 2512–2520,
+04 2019b. doi: 10.1109/INFOCOM.2019.8737416.
+Xiang, M. and Su, L. β-stochastic sign sgd: A Byzantine
+resilient and differentially private gradient compressor
+for federated learning. arXiv preprint arXiv:2210.00665,
+2022.
+Xie, C., Koyejo, O., and Gupta, I. Generalized Byzantine-
+tolerant sgd, 2018.
+Xie, C., Koyejo, O., and Gupta, I. Fall of empires: Breaking
+Byzantine-tolerant SGD by inner product manipulation.
+In Proceedings of the Thirty-Fifth Conference on Uncer-
+tainty in Artificial Intelligence, UAI 2019, Tel Aviv, Israel,
+July 22-25, 2019, pp. 83, 2019.
+Yin, D., Chen, Y ., Kannan, R., and Bartlett, P. Byzantine-
+robust distributed learning: Towards optimal statistical
+rates. In International Conference on Machine Learning,
+pp. 5650–5659. PMLR, 2018.
+Yousefpour, A., Shilov, I., Sablayrolles, A., Testuggine, D.,
+Prasad, K., Malek, M., Nguyen, J., Ghosh, S., Bharadwaj,
+A., Zhao, J., Cormode, G., and Mironov, I. Opacus: User-
+friendly differential privacy library in pytorch, 2021. URL
+https://arxiv.org/abs/2109.12298.
+Zhao, B., Mopuri, K. R., and Bilen, H. idlg: Improved deep
+leakage from gradients. arXiv preprint arXiv:2001.02610,
+2020.
+Zhu, B., Jiao, J., and Steinhardt, J. Robust estimation via
+generalized quasi-gradients. Information and Inference:
+A Journal of the IMA, 11(2):581–636, 2022.
+Zhu, H. and Ling, Q. Bridging differential privacy and
+Byzantine-robustness via model aggregation. In Raedt,
+L. D. (ed.), Proceedings of the Thirty-First International
+Joint Conference on Artificial Intelligence, IJCAI-22, pp.
+2427–2433. International Joint Conferences on Artificial
+Intelligence Organization, 7 2022. doi: 10.24963/ijcai.
+2022/337. URL https://doi.org/10.24963/
+ijcai.2022/337. Main Track.
+12
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Zhu, L., Liu, Z., and Han, S. Deep leakage from gradients.
+In Wallach, H., Larochelle, H., Beygelzimer, A., d Alch´e-
+Buc, F., Fox, E., and Garnett, R. (eds.), Advances in
+Neural Information Processing Systems 32, pp. 14774–
+14784. Curran Associates, Inc., 2019.
+13
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Organization of the Appendix
+Appendix A contains the proof of our lower bounds. Appendix B contains proofs of claims related to(f, κ)-robust averaging
+and SMEA. Appendix C contains the privacy analysis of SAFE -DSHB . Appendix D contains the convergence analysis of
+SAFE -DSHB. Appendix E contains the experimental setup and results of our empirical evaluation.
+A. Lower Bounds
+In Section A.1, we recall lower bounds on centralized private algorithms. We then extend these results to distributed private
+algorithms. We start by the lower bound due to privacy alone in Section A.2. Next, we show the lower bound due to
+robustness alone in Section A.3. We then show the lower bound due to the privacy-robustness tradeoff in Section A.4.
+Finally, we merge the previous results to show the final lower bound in Section A.5.
+A.1. Lower Bounds in Centralized DP
+We recall lower bounds (Steinke & Ullman, 2016) on the error incurred bycentralized differentially private mechanisms
+for estimating d-dimensional one-way marginals; i.e., the average of rows of a dataset. Recall that Steinke & Ullman
+prove a sharper bound (by factor log (1/δ)) than Bassily et al., whose work is based on lower bounds using fingerprinting
+codes (Bun et al., 2014). We recall below the main lower bound from (Steinke & Ullman, 2016).
+Lemma A.1 (Theorem 1.1, Steinke & Ullman (2016)). Let m, d≥ 1, ε, δ∈ (0, 1) and X = {±1}d, Y = [±1]d. Consider
+any (ε, δ)-DP centralized algorithm M : X → Y. Assume that δ ≤ 1/m1+Ω(1) and that δ ≥ 2−o(m). Let D ∈ Xm and D
+denote the average of records of D. For any ϱ ≤ 1/10 such that for every D ∈ Xm, E
+M(D) − D
+
+1
+
+≤ dϱ, we have:
+m = Ω
+ p
+d log (1/δ)
+εϱ
+!
+.
+Observe in Lemma A.1 that the lower bound assumption δ ≤ 1/m1+Ω(1) is slightly more restrictive than the folklore
+assumption δ = o(1/m) (Dwork et al., 2014). The latter ensures that (ε, δ)-DP precludes some intuitively non-private
+algorithms, e.g., when δ ≥ 1/m, the algorithm that returns ⌊mδ⌋ random elements of the dataset is (0, δ)-DP.
+A.2. Case I: Non-adversarial Setting
+We prove below our lower bound due to privacy, stated in Proposition 3.1.
+Proposition 3.1. Let n, m≥ 1, and ε, δ∈ (0, 1). Consider X = {± 1√
+d }d and ℓ = ∥·∥2. Consider an arbitrary (ε, δ)-DP
+distributed algorithm A : X m×n → Rd. Assume that ε ≤ 1/4
+p
+2n ln (m + 1) and that 2−m1−γ
+≤ nδ ≤ 1/8m1+γ for
+some γ ∈ (0, 1). For any ϱ ≤ 1/100, if A is (0, ϱ)-robust, then we must have
+ϱ = Ω
+ d
+ε2nm2
+
+.
+Proof. Let n, m, d≥ 1, ε, δ∈ (0, 1), and ϱ ≤ 1/100. Consider X =
+n
+±1/
+√
+d
+od
+and ℓ = ∥·∥2. We consider an arbitrary
+distributed algorithm A : X m×n → Rd that satisfies (ε, δ)-distributed DP (see Definition 2.3), and (0, ϱ)-robustness (see
+Definition 2.1). We assume that ε ≤ 1/4
+p
+2n ln (m + 1) and that 2−m1−γ
+≤ nδ ≤ 1/8m1+γ for some γ ∈ (0, 1).
+Proof outline. We consider the centralized algorithmM which takes as input dataset D ∈ Xm and executes A(D1, . . . ,Dn)
+on n copies of D, i.e., D1 = . . .= Dn = D. Then, we derive the DP guarantee and utility of M using the facts that A
+satisfies (ε, δ)-distributed DP (see Definition 2.3) and (0, ϱ)-robustness, respectively. Finally, we apply the centralized DP
+lower bound on M (stated in Lemma A.1) to conclude the proof.
+Privacy guarantee of M. We first analyze the DP guarantees of M inherited from A.
+Recall from Definition 2.3 that, since A is (ε, δ)-DP, it can communicate with each database Di subject to (ε, δ)-DP. Thus,
+when running M, in the worst case, algorithm A may adaptively query the same database D a total of n times, subject
+to (ε, δ)-DP budget for each query. Therefore, M is (εn, δn)-DP where (εn, δn) is the privacy guarantee resulting from
+14
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+composing (ε, δ)-DP across n adaptive queries. Thanks to the advanced composition theorem (Dwork et al., 2014), we
+obtain that, for any δ′ ∈ (0, 1),
+εn = ε
+p
+2n ln (1/δ′) + nε(eε − 1), δn = nδ + δ′. (4)
+As ε ∈ (0, 1), we have eε − 1 ≤ 2ε and thus
+εn ≤ ε
+p
+2n ln (1/δ′) + 2nε2. (5)
+We now set δ′ as follows:
+δ′ = 1
+(m + 1)1+γ ∈ (0, 1). (6)
+We verify below the privacy conditions onM of Lemma A.1. We first prove that ln (1/δ′) ∈ [nε2, 1/16nε2), and then that
+εn ≤ 4ε
+p
+n ln (1/δ′) < 1.
+Bound on ln (1/δ′): Since we assume ε ≤ 1/4
+p
+2n ln (m + 1) (with m ≥ 1), we have
+nε2 ≤ 1/16 ≤ 1/16nε2.
+On the other hand, as m ≥ 1, it follows from the expression (6) of δ′ that 1/δ′ ≥ 2 and ln (1/δ′) ≥ 1/4 ≥ nε2.
+Also, since ε ≤ 1/4
+p
+2n ln (m + 1) we have ln (m + 1) ≤ 1/32nε2, and thus (because γ ∈ (0, 1)) we have
+ln (1/δ′) = (1 + γ) ln (m + 1) < 2 ln (m + 1) ≤ 1/16nε2.
+This proves that
+ln (1/δ′) ∈ [nε2, 1/16nε2). (7)
+Bound on εn: Thanks to (7), we have ln (1/δ′) ≥ nε2. Thus, by taking square roots we have ε√n ≤
+p
+ln (1/δ′).
+Therefore, nε2 ≤ ε
+p
+n ln (1/δ′). Then, using the bound on εn in (5), we obtain
+εn ≤ ε
+p
+2n ln (1/δ′) + 2nε2 ≤ ε
+p
+2n ln (1/δ′) + 2ε
+p
+n ln (1/δ′) ≤ 4ε
+p
+n ln (1/δ′).
+On the other hand, since we showed in (7) that ln (1/δ′) < 1/16nε2, we have 4ε
+p
+n ln (1/δ′) < 1. This proves that
+εn ≤ 4ε
+p
+n ln (1/δ′) < 1. (8)
+From (8), we have εn ∈ (0, 1). From (4), we have δn = nδ + δ′. Thus, by assumption on δ and (6), the parameter δn
+satisfies both δn ≥ nδ ≥ 2−m1−γ
+= 2−o(m) and δn = nδ + δ′ ≤ 1/8m1+γ + 1/(m + 1)1+γ = 1/m1+Ω(1).
+Utility guarantees of M. We now analyze the utility guarantees of M, inherited from A.
+Let D ∈ Xm be an arbitrary set of m points from the specified space X =
+n
+±1/
+√
+d
+od
+. Recall that A is assumed
+(0, ϱ)-robust. By Definition 2.1, for any D1, . . . ,Dn ∈ Xm, the output ˆθ = A(D1, . . . ,Dn) verifies
+ϱ ≥ E
+
+L(ˆθ; D1, . . . ,Dn) − inf
+θ∈Rd
+L(θ; D1, . . . ,Dn)
+
+, (9)
+In this particular case, since D1, . . . ,Dn = D and ℓ(θ; x) := ∥θ − x∥2, we have for all θ ∈ Rd,
+L(θ; D1, . . . ,Dn) = 1
+nm
+nX
+i=1
+X
+x∈Di
+∥θ − x∥2 = 1
+m
+X
+x∈D
+∥θ − x∥2 = L(θ; D). (10)
+15
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+We can rewrite the above upon applying the bias-variance decomposition: for anyx1, . . . , xn we have 1
+n
+Pn
+i=1 ∥xi − x∥2 =
+1
+n
+Pn
+i=1 ∥xi∥2 − ∥x∥2 where x = 1
+n
+Pn
+i=1 xi. Thus, denoting D := 1
+m
+P
+x∈D x, we can rewrite (10) as
+L(θ; D1, . . . ,Dn) = L(θ; D) =
+θ − D
+2
++ 1
+m
+X
+x∈D
+D −x
+2
+. (11)
+This loss is minimized at θ = D, and the minimum value L∗ := 1
+m
+P
+x∈D
+D −x
+2
+. Thus, substituting the expression of
+L from (11) in (9), we obtain that
+ϱ ≥ E
+h
+L(ˆθ; D) − L∗
+i
+= E
+ˆθ − D
+
+2
+.
+Note that by construction of M, we have M(D) = A(D, . . . ,D) = ˆθ. Thus, from above we obtain that
+ϱ ≥ E
+hM(D) − D
+2i
+.
+Thus, as ∥·∥1 ≤
+√
+d ∥·∥, by taking square roots above, applying Jensen’s inequality and multiplying by d, we obtain that
+d√ϱ ≥ d
+r
+E
+hM(D) − D
+2i
+≥ d E
+M(D) − D
+
+≥
+√
+d E
+M(D) − D
+
+1
+
+= E
+h
+√
+d · M(D) −
+√
+d · D
+
+1
+i
+.
+(12)
+Recall that X = {±1/
+√
+d}d. As in Theorem 5.2 of (Steinke & Ullman, 2016), we define a mechanism M′ : {±1}d×m →
+[±1]d as follows: on input D′ ⊆ {±1}d×m let D = D′/
+√
+d ∈ Xm, return
+√
+d · M(D) truncated to [±1]d. Thus, by (12),
+mechanism M′ verifies for all D′ ⊆ {±1}d×m that
+d√ϱ ≥ E
+M′(D) − D′
+
+1
+
+. (13)
+Invoking Lemma A.1. Note that M′, similar to M, is also (εn, δn)-DP by the argument of post-processing. Recall that we
+have shown earlier that εn, δn satisfy the conditions of Lemma A.1. Since ϱ ≤ 1/100, we also have √ϱ ≤ 1/10. Therefore,
+upon applying Lemma A.1 to M′, in conjunction with (13), we deduce that
+m = Ω
+ p
+d log (1/δn)
+εn
+√ϱ
+!
+.
+By rearranging terms above and taking squares, we obtain that
+ϱ = Ω
+ d log (1/δn)
+ε2nm2
+
+. (14)
+Recall that we have already shown in (8) and (4), respectively, that εn ≤ 4ε
+p
+n ln (1/δ′) and δn = nδ + δ′, where
+δ′ = 1/(m + 1)1+γ (defined in (6)). Therefore, (14) yields
+ϱ = Ω
+ d log (1/(nδ + δ′))
+ε2nm2 log (1/δ′)
+
+. (15)
+As ln(1 +x) ≤ x, substituting δ′ from (6), and using the assumption that δ ≤ 1/8nm1+γ, γ ∈ (0, 1), m≥ 1, we obtain that
+ln (1/(nδ + δ′))
+ln (1/δ′) = ln (1/δ′(1 + nδ/δ ′))
+ln (1/δ′) = 1 + ln (1/(1 + nδ/δ ′))
+ln (1/δ′)
+= 1 − ln (1 +nδ/δ ′)
+ln (1/δ′) ≥ 1 − nδ
+δ′ ln (1/δ′) = 1 − nδ(m + 1)γ+1
+(1 + γ) ln (m + 1)
+≥ 1 − (m + 1)γ+1
+8(1 + γ)m1+γ ln (m + 1) ≥ 1 − (2m)γ+1
+8(1 + γ)m1+γ ln (m + 1)
+= 1 − 2γ+1
+8(1 + γ) ln (m + 1) ≥ 1 − 4
+8 ln (m + 1) ≥ 1 − 1
+2 ln (2) = Ω(1).
+16
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Finally, substituting from above in Equation (15) proves the desired result, i.e.,
+ϱ = Ω
+ d
+ε2nm2
+
+.
+A.3. Case II: No Privacy
+We prove below the lower bound due to robustness stated in Proposition 3.2.
+Proposition 3.2. Let Assumption 2.1 hold. Let n ≥ 1, 1 ≤ f < n/2, and κ = 16f (n−2f )
+(n−f )2 . Consider X = {± G√
+κd }d and
+ℓ = ∥·∥2. If a distributed algorithm is (f, ϱ)-robust, then
+ϱ = Ω
+ f
+n · G2
+
+.
+Proof. The proof is similar to that of Theorem III (Karimireddy et al., 2022). Let n ≥ 1, 1 ≤ f < n/2, κ = 16f (n−2f )
+(n−f )2 , and
+G >0. Consider X = {± G√
+κd }d and ℓ = ∥·∥2. Let Assumption 2.1 hold. Assume that algorithm A is (f, ϱ)-robust.
+Denote by x = G√
+κd · 1 ∈ Rd, where 1 ∈ Rd is the vector of ones. Consider the following datasets D1 = . . .= Dn−f =
+{x}m (i.e. all rows are x) and Dn−f +1 = . . .= Dn = {−x}m (i.e. all rows are −x). Consider the two situations of honest
+identities H1 = {1, . . . , n− f } and H2 = {f + 1, . . . , n}.
+We first show that the loss functions L(· ; D1), . . . ,L(· ; Dn) (defined using ℓ in Section 2) satisfy Assumption 2.1 in both
+situations. This is straightforward in situation H1 since honest losses are identical. In situation H2, we have for all θ ∈ Rd,
+∇LH2 (θ) = 1
+n − f
+X
+i∈H2
+∇L(θ; Di) = n − 2f
+n − f 2(θ − x) + f
+n − f 2(θ + x) = 2
+
+θ − n − 3f
+n − f x
+
+.
+Observe that, as n >2f, the intersection H1 ∩ H2 = {f + 1, . . . , n− f } is non-empty. Therefore, thanks to the choice of
+x, we now show that Assumption 2.1 holds, as for all θ ∈ Rd we have
+1
+|H2|
+X
+i∈H2
+∥∇L(θ; Di) − ∇LH2 (θ)∥2 = |H1 ∩ H2|
+n − f ∥∇L(θ; Df +1) − ∇LH2 (θ)∥2
++ |H2 \ H1|
+n − f ∥∇L(θ; Dn) − ∇LH2 (θ)∥2
+= n − 2f
+n − f
+2(θ − x) − 2(θ − n − 3f
+n − f x)
+
+2
++ f
+n − f
+2(θ + x) − 2(θ − n − 3f
+n − f x)
+
+2
+= 4(n − 2f )
+n − f
+
+−2f
+n − f x
+
+2
++ 4f
+n − f
+
+2(n − 2f )
+n − f x
+
+2
+= 16f (n − 2f )
+(n − f )2 ∥x∥2
+= κ ∥x∥2 = G2.
+Now, denote L∗,H1 := inf Rd LH1 and L∗,H2 := inf Rd LH2. Since learning algorithm A is (f, ϱ)-robust, it outputs ˆθ such
+that E
+h
+LH1 (ˆθ) − L∗,H1
+i
+≤ ϱ and E
+h
+LH2 (ˆθ) − L∗,H2
+i
+≤ ϱ. Note that situations H1 and H2 are indistinguishable to
+algorithm A because it ignores the honest identities, and thus ˆθ is the same in both situations.
+Recall that the expression of loss LH1 is
+LH1 = 1
+|H1|
+X
+i∈H1
+L(θ; Di) = 1
+|H1|
+X
+i∈H1
+∥θ − x∥2 = ∥θ − x∥2 .
+17
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Therefore, the loss is minimized at θ = x and we have L∗,H1 = LH1 (x) = 0. Thus, we have
+E
+h
+LH1 (ˆθ) − L∗,H1
+i
+= E
+ˆθ − x
+
+2
+.
+On the other hand, after some algebraic manipulations, the expression of loss LH2 is
+LH2 (θ) = 1
+|H2|
+X
+i∈H2
+L(θ; Di) = |H1 ∩ H2|
+n − f · ∥θ − x∥2 + |H2 \ H1|
+n − f · ∥θ + x∥2
+= n − 2f
+n − f · (∥θ∥2 + ∥x∥2 − 2 ⟨θ, x⟩) + f
+n − f · (∥θ∥2 + ∥x∥2 + 2 ⟨θ, x⟩)
+=
+θ − n − 3f
+n − f x
+
+2
++ κ ∥x∥2 .
+Therefore, the loss is minimized at θ = n−3f
+n−f x and we have L∗,H2 = κ ∥x∥2. Thus, we obtain
+E
+h
+LH2 (ˆθ) − L∗,H2
+i
+= E
+"ˆθ − n − 3f
+n − f x
+
+2#
+.
+Recall that κ = 16f (n−2f )
+(n−f )2 . Therefore, invoking Jensen’s inequality, we have
+ϱ ≥ max
+n
+E
+h
+LH1 (ˆθ) − L∗,H1
+i
+, E
+h
+LH2 (ˆθ) − L∗,H2
+io
+≥ 1
+2
+
+E
+h
+LH1 (ˆθ) − L∗,H1
+i
++ E
+h
+LH2 (ˆθ) − L∗,H2
+i
+= 1
+2
+ ˆθ − x
+
+2
++
+ˆθ − n − 3f
+n − f x
+
+2!
+≥ 1
+4
+
+2f
+n − f x
+
+2
+=
+ f
+n − f
+2 G2
+κ = 1
+16 · f
+n − 2f G2. (16)
+Since n − 2f ≤ n, we obtain ϱ ≥ 1
+16 · f
+n G2, which concludes the proof.
+A.4. Case III: Adversarial Setting
+We show below the lower bound from Proposition 3.3 due to the privacy-robustness tradeoff.
+Proposition 3.3. Let n ≥ 3, 1 ≤ f < n/2, m ≥ 1, ε, δ∈ (0, 1), and κ = 16f (n−2f )
+(n−f )2 . Consider X = {± 1√
+d }d ∪ {±1√
+κd }d
+and ℓ = ∥·∥2. Consider any (ε, δ)-DP distributed algorithm A : X m×n → Rd. Assume that 2−o(m) ≤ δ ≤ 1/m1+Ω(1).
+For any ϱ ≤ f +1
+100(n−f ), if A is (f, ϱ)-robust, then we must have
+ϱ = Ω
+ f + 1
+n − f · log (1/δ)
+ε2m2
+
+.
+Proof. Let n ≥ 3, 1 ≤ f < n/2, m ≥ 1, d ≥ 1, ε, δ∈ (0, 1), κ = 16f (n−2f )
+(n−f )2 , and ϱ ≤ f +1
+100(n−f ). Consider
+X = {±1/
+√
+d}d ∪ {±1/
+√
+κd}d and ℓ = ∥·∥2. We consider a distributed algorithm A : X m×n → Rd that satisfies
+(ε, δ)-distributed DP where 2−o(m) ≤ δ ≤ 1/m1+Ω(1) and (f, ϱ)-robustness.
+We consider the following datasets. Let 1 denote the vector of ones in Rd. For i ∈ {2, . . . , n− f }, we set
+Di = D+ := {+ 1√
+d
+· 1}m,
+i.e., all rows are + 1√
+d · 1 ∈ Rd. For i ∈ {n − f + 1, . . . , n} we set
+Di = D− := {− 1√
+d
+· 1}m,
+18
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+i.e., all rows are − 1√
+d · 1 ∈ Rd. Finally, we fix D1 ∈ Xm to be an arbitrary dataset with every element having identical
+coordinates. That is, for arbitrary α1,1, . . . , α1,m ∈ {±1}, we set
+D1 =
+ α1,1√
+d
+· 1, . . . ,α1,m√
+d
+· 1
+
+.
+Proof outline. We consider the centralized algorithm M : X m → Rd which takes as input dataset D1 ∈ Xm and executes
+A(D1, D2, . . . ,Dn), where the datasets D2, . . . ,Dn are fixed above. We first derive the DP and utility guarantees M
+inherits from A, which satisfies (ε, δ)-distributed DP (see Definition 2.3) and (f, ϱ)-robustness, and then conclude the proof
+by applying the centralized lower bound Lemma A.1 to M.
+Privacy guarantees of M. We first state the privacy guarantees of M inherited from A.
+As per Definition 2.3, since A is (ε, δ)-DP, all communications with worker w1 (whose dataset is D1) are (ε, δ)-DP. It
+follows directly that M is (ε, δ)-DP by post-processing.
+Utility guarantees of M. We now analyze the utility guarantees of M inherited from A.
+Since A is (f, ϱ)-robust (Definition 2.1), the output ˆθ = M(D1) = A(D1, . . . ,Dn) verifies
+ϱ ≥ E
+h
+LH(ˆθ) − L∗
+i
+, (17)
+for any set of honest identities H ⊆ {1, . . . , n}, |H| = n − f, where we denote L∗ := inf R LH.
+Reduction to one-dimensional space: We now show that we can simply considerd = 1, without loss of generality.
+For this, we develop the RHS of (17). We have for any θ ∈ Rd and H ⊆ {1, . . . , n}, |H| = n − f:
+LH(θ) = 1
+|H|
+X
+i∈H
+1
+m
+X
+x∈Di
+∥θ − x∥2 . (18)
+The above function is minimized at θ∗
+H := 1
+|H|
+P
+i∈H Di the average of one-way marginals Di := 1
+m
+P
+x∈Di x.
+Therefore, the minimum of LH is L∗,H := LH(θ∗
+H).
+Recall the following bias-variance decomposition: for any x1, . . . , xn ∈ Rd we have 1
+n
+Pn
+i=1 ∥xi − x∥2 =
+1
+n
+Pn
+i=1 ∥xi∥2 − ∥x∥2, where we denoted x := 1
+n
+Pn
+i=1 xi. Therefore, recalling (18) and θ∗
+H = 1
+|H|
+P
+i∈H Di, we
+have
+LH(θ) − L∗,H = LH(θ) − LH( 1
+|H|
+X
+i∈H
+Di) =
+θ − 1
+|H|
+X
+i∈H
+Di
+
+2
+. (19)
+Recall our setting of datasets in the beginning of the proof: in particular, for every i ∈ {1, . . . , n}, each element of
+dataset Di has identical coordinates. Thus, there is αi ∈ [±1] such that Di = αi√
+d · 1. Plugging this in (19) yields:
+LH(θ) − L∗,H =
+θ − 1
+|H|
+X
+i∈H
+Di
+
+2
+=
+θ − 1√
+d · |H|
+X
+i∈H
+αi1
+
+2
+=
+dX
+k=1
+θk − 1√
+d · |H|
+X
+i∈H
+αi
+
+2
+= 1
+d
+dX
+k=1
+
+√
+d · θk − 1
+|H|
+X
+i∈H
+αi
+
+2
+, (20)
+where θk denotes the k-th coordinate of θ ∈ Rd. Upon applying (17) and then Jensen’s inequality, we obtain
+ϱ ≥ E
+h
+LH(ˆθ) − L∗,H
+i
+= 1
+d
+dX
+k=1
+E
+
+
+
+√
+d · ˆθk − 1
+|H|
+X
+i∈H
+αi
+
+2
+ ≥ E
+
+
+
+1
+d
+dX
+k=1
+√
+d · ˆθk − 1
+|H|
+X
+i∈H
+αi
+
+2
+
+= E
+
+
+
+dX
+k=1
+ˆθk√
+d
+− 1
+|H|
+X
+i∈H
+αi
+
+2
+ . (21)
+19
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Therefore, everything happens as if d = 1 . That is, data universe X = {±1}, and datasets D+ = {+1}m,
+D− = {−1}m, and D1 = {α1,1, . . . , α1,m} being arbitrary in X m. Indeed, denote ˜θ := Pd
+k=1
+ˆθk√
+d ∈ R. Recall that,
+now that d = 1, each αi ∈ [±1] is such that Di = αi. In this one-dimensional setting of datasets, we develop the
+RHS of (21), by using the aforementioned bias-variance decomposition backwards:
+ϱ ≥ E
+
+
+
+˜θ − 1
+|H|
+X
+i∈H
+αi
+
+2
+ = E
+"
+1
+|H|
+X
+i∈H
+1
+m
+X
+x∈Di
+˜θ − x
+
+2
+#
+− E
+
+ 1
+|H|
+X
+i∈H
+1
+m
+X
+x∈Di
+x − 1
+|H|
+X
+i∈H
+Di
+
+2
+
+= E
+h
+LH(˜θ) − L∗,H
+i
+.
+Thus, (17) holds with loss ℓ being the one-dimensional quadratic loss and mechanism fM returning ˜θ instead of ˆθ.
+Since ˜θ is a function of ˆθ without access to D1, fM is also (ε, δ)-DP by post-processing. Throughout the remainder
+of the proof, we set d = 1 without loss of generality.
+We consider below the RHS of (17). We have for anyθ ∈ R:
+LH(θ) = 1
+|H|
+X
+i∈H
+1
+m
+X
+x∈Di
+|θ − x|2 . (22)
+The above function is minimized at θ∗
+H := 1
+|H|
+P
+i∈H Di the average of one-way marginals Di := 1
+m
+P
+x∈Di x.
+Next, following (30), we consider two possible cases of honest identities, a priori indistinguishable to the algorithm. In the
+first case, we consider the set of honest identities H to be H1 = {1, . . . , n− f }. In the second case, we consider the set of
+honest identities H to be H2 := {1} ∪ {f + 2, . . . , n}. As |H| = n − f, upon invoking Definition 2.1 in both the cases, we
+obtain a upper bound on E
+h
+|ˆθ − D1|2
+i
+in terms of ϱ.
+First case: Consider H to be H1 = {1, . . . , n− f }. Recall that Di = D+ for all i ∈ {2, . . . , n− f }. By (22), we have for
+all θ ∈ R:
+LH1 (θ) = 1
+|H1|
+X
+i∈H1
+1
+m
+X
+x∈Di
+|θ − x|2 = 1
+|H1|
+1
+m
+X
+x∈D1
+|θ − x|2 + |H1| −1
+|H1|
+1
+m
+X
+x∈D+
+|θ − x|2
+= 1
+n − f
+1
+m
+X
+x∈D1
+|θ − x|2 + (1 − 1
+n − f )
+θ − D+
+2
+≥ 1
+n − f
+θ − D1
+2
++ (1 − 1
+n − f )
+θ − D+
+2
+. (Jensen’s inequality)
+Thus, from above we obtain that
+E
+h
+LH1 (ˆθ)
+i
+≥ 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ (1 − 1
+n − f ) E
+h
+|ˆθ − D+|2
+i
+. (23)
+Now, recall the following bias-variance decomposition: for any x1, . . . , xn ∈ R we have 1
+n
+Pn
+i=1 |xi − x|2 =
+1
+n
+Pn
+i=1 |xi|2 − |x|2 where x := 1
+n
+Pn
+i=1 xi. Thus, from (22) we obtain that θ∗
+H1 = 1
+|H1|
+P
+i∈H1 Di. Thus, as |x|2 = 1 for
+all x ∈ X, we have
+L∗,H1 = LH1 (θ∗
+H1 ) = 1
+m |H1|
+X
+i∈H1
+X
+x∈Di
+θ∗
+H1 − x
+2
+= 1
+m |H1|
+X
+i∈H1
+X
+x∈Di
+|x|2 −
+θ∗
+H1
+2
+= 1 −
+θ∗
+H1
+2
+= 1 −
+
+1
+|H1|
+X
+i∈H1
+Di
+
+2
+= 1 −
+
+1
+n − f D1 + (1 − 1
+n − f )D+
+
+2
+= 1 −
+
+1
+n − f D1 + 1 − 1
+n − f
+
+2
+= 1 − 1
+(n − f )2
+D1 + n − f − 1
+2
+.
+20
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Note that, as D1 ∈ Xm = {±1}m, we have D1 ∈ [±1]. Also, since f < n/2 and n ≥ 3, we have n − f − 2 ≥ 0. Therefore,D1 + n − f − 1
+2
+≥ |n − f − 2|2. Substituting this in the above, we obtain that
+L∗,H1 = 1 − 1
+(n − f )2
+D1 + n − f − 1
+2
+≤ 1 − 1
+(n − f )2 |n − f − 2|2 = 1 −
+1 − 2
+n − f
+
+2
+= 2
+n − f (2 − 2
+n − f ) = 4
+n − f (1 − 1
+n − f ) ≤ 4
+n − f ≤ 4(f + 1)
+n − f . (24)
+Substituting from (23) and (24) in (17) we obtain that
+ϱ + 4(f + 1)
+n − f ≥ ϱ + L∗,H1 ≥ E
+h
+LH1 (ˆθ)
+i
+≥ 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ (1 − 1
+n − f ) E
+h
+|ˆθ − D+|2
+i
+. (25)
+Second case: Consider H to be H2 = {1} ∪ {f + 2, . . . , n}. Recall that Di = D− for all i ∈ {n − f + 1, . . . , n}. By (22),
+we have for all θ ∈ R:
+LH2 (θ) = 1
+|H2|
+X
+i∈H2
+1
+m
+X
+x∈Di
+|θ − x|2
+= 1
+|H2|
+1
+m
+X
+x∈D1
+|θ − x|2 +
+ |H2| −1 − f
+|H2|
+ 1
+m
+X
+x∈D+
+|θ − x|2 +
+ f
+|H2|
+ 1
+m
+X
+x∈D−
+|θ − x|2
+=
+ 1
+n − f
+ 1
+m
+X
+x∈D1
+|θ − x|2 +
+ n − 2f − 1
+n − f
+ θ − D+
+2
++ f
+n − f
+θ − D−
+2
+≥
+ 1
+n − f
+ 1
+m
+X
+x∈D1
+|θ − x|2 + f
+n − f
+θ − D−
+2
+(n ≥ 2f + 1)
+≥ 1
+n − f
+θ − D1
+2
++ f
+n − f
+θ − D−
+2
+. (Jensen’s inequality)
+Substituting θ = ˆθ, and taking expectation yields
+E
+h
+LH2 (ˆθ)
+i
+≥ 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ f
+n − f E
+h
+|ˆθ − D−|2
+i
+. (26)
+Now, recall the following bias-variance decomposition: for any x1, . . . , xn ∈ R we have 1
+n
+Pn
+i=1 |xi − x|2 =
+1
+n
+Pn
+i=1 |xi|2 − |x|2, where we denoted x := 1
+n
+Pn
+i=1 xi. Using this in (22), and that ∀x ∈ X, |x|2 = 1, we get
+L∗,H2 = LH2 (θ∗
+H2 ) = 1
+m |H2|
+X
+i∈H2
+X
+x∈Di
+θ∗
+H2 − x
+2
+= 1
+m |H2|
+X
+i∈H2
+X
+x∈Di
+|x|2 −
+θ∗
+H2
+2
+= 1 −
+θ∗
+H2
+2
+= 1 −
+
+1
+|H2|
+X
+i∈H2
+Di
+
+2
+= 1 −
+
+1
+n − f D1 + n − 2f − 1
+n − f D+ + f
+n − f D−
+
+2
+= 1 −
+
+1
+n − f D1 + n − 2f − 1
+n − f − f
+n − f
+
+2
+= 1 −
+1 + 1
+n − f D1 − 2f + 1
+n − f
+
+2
+=
+
+1 − 1 − 1
+n − f D1 + 2f + 1
+n − f
+ 
+1 + 1 + 1
+n − f D1 − 2f + 1
+n − f
+
+=
+ 2f + 1 − D1
+n − f
+ 
+2 − 2f + 1 − D1
+n − f
+
+.
+Note that, as D1 ∈ Xm = {±1}m, we have D1 ∈ [±1]. This, together with n ≥ 2f + 1, implies that both the terms in the
+product above are non-negative. Moreover, as D1 ≥ −1, the first term can be bounded by
+2f + 1 − D1
+n − f ≤ 2(f + 1)
+n − f .
+21
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Similarly, as D1 ≤ 1, the second term can be bounded by
+2 − 2f + 1 − D1
+n − f ≤ 2 − 2f
+n − f ≤ 2.
+Consequently, we have
+L∗,H2 ≤ 4(f + 1)
+n − f . (27)
+Invoking (17) with the set of honest identities H2, and using the bounds shown in (26), (27) yields:
+ϱ + 4(f + 1)
+n − f ≥ ϱ + L∗,H2 ≥ E
+h
+LH2 (ˆθ)
+i
+≥ 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ f
+n − f E
+h
+|ˆθ − D−|2
+i
+. (28)
+Final step: We deduce from (25), (28) that
+ϱ + 4(f + 1)
+n − f ≥ max
+n 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ (1 − 1
+n − f ) E
+h
+|ˆθ − D+|2
+i
+,
+1
+n − f E
+h
+|ˆθ − D1|2
+i
++ f
+n − f E
+h
+|ˆθ − D−|2
+i o
+= 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ max
+
+(1 − 1
+n − f ) E
+h
+|ˆθ − D+|2
+i
+, f
+n − f E
+h
+|ˆθ − D−|2
+i
+≥ 1
+n − f E
+h
+|ˆθ − D1|2
+i
++ f
+n − f max
+n
+E
+h
+|ˆθ − D+|2
+i
+, E
+h
+|ˆθ − D−|2
+io
+, (29)
+where the last inequality is due tof < n
+2 , which implies that1− 1
+n−f ≥ f
+n−f . Besides, observe that, as D1 ∈ Xm = {±1}m,
+we have D1 ∈ [±1]. Recall that D+ = +1 and D− = −1. Thus, it holds that
+E
+h
+|ˆθ − D1|2
+i
+≤ max (E
+h
+|ˆθ − D+|2
+i
+, E
+h
+|ˆθ − D−|2
+i
+). (30)
+Indeed, since D1 ∈ [±1], we can write D1 = λ × (+1) + (1 − λ) × (−1) for some λ ∈ [0, 1]. Thus, using
+Jensen’s inequality and then taking expectations, we have E
+h
+|ˆθ − D1|2
+i
+≤ λ E
+h
+|ˆθ − 1|2
+i
++ (1 − λ) E
+h
+|ˆθ + 1|2
+i
+≤
+max (E
+h
+|ˆθ − 1|2
+i
+, E
+h
+|ˆθ + 1|2
+i
+).
+Using (30) in (29), we obtain, for every D1 ∈ Xm, that
+ϱ + 4(f + 1)
+n − f ≥ f + 1
+n − f E
+h
+|ˆθ − D1|2
+i
+. (31)
+Before concluding, recall that 1 ≤ f ≤ n
+2 , thus applying Proposition 3.2 with G = 1 yields
+ϱ = Ω
+ f
+n
+
+= Ω
+ f + 1
+n − f
+
+. (32)
+Indeed, since the data universe considered in the proof includes {± 1√
+κd }d, we can apply Proposition 3.2. Plugging this back
+in (31), we have for every D1 ∈ Xm that
+ϱ = Ω
+ f + 1
+n − f E
+h
+|ˆθ − D1|2
+i
+.
+Invoking Lemma A.1. Hence, since ϱ ≤ f +1
+100(n−f ), we can proceed in the same way as in the proof of Proposition 3.1 to
+leverage Lemma A.1 (with d = 1) for showing
+n − f
+f + 1 ϱ = Ω
+ log (1/δ)
+ε2m2
+
+.
+We finally conclude the desired result by rearranging terms and ignoring absolute constants:
+ϱ = Ω
+ f + 1
+n − f · log (1/δ)
+ε2m2
+
+.
+22
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+A.5. Final Lower Bound
+We prove below the final lower bound stated in Theorem 3.1.
+Theorem 3.1. Let X = Rd, ℓ = ∥·∥2, n ≥ 3, 0 ≤ f < n/2, m ≥ 1, and ε, δ∈ (0, 1). Consider arbitrary datasets
+D1, . . . ,Dn ∈ Xm such that Assumption 2.1 is satisfied with G ≥ 1. Let A : X m×n → Rd be an (ε, δ)-DP distributed
+algorithm. Assume that ε ≤ 1/4
+p
+2n ln (m + 1), and that 2−m1−γ
+≤ nδ ≤ 1/8m1+γ for some γ ∈ (0, 1). For any
+ϱ ≤ f +1
+100(n−f ), if A is (f, ϱ)-robust, then
+ϱ = eΩ
+ d
+ε2nm2 + f
+n · 1
+ε2m2 + f
+n · G2
+
+.
+Proof. The proof consists in showing that the setting we consider in the above theorem allows us to merge the lower bounds
+from propositions 3.1, 3.3, and 3.2. First, we remark that the case f = 0 corresponds to simply showing that ϱ = eΩ
+  d
+ε2nm2
+
+,
+which follows immediately from Proposition 3.1 directly (see Step 1 below for verifying the applicability of the proposition).
+In the remainder of the proof, we will assume f >0 and η >0. Let H denote the set of honest nodes of size n − f.
+Step 1: To derive the first term inΩ
+  d
+ε2nm2
+
+, we remark that all the conditions of Proposition 3.1 on ε, δ, ϱ, n, mhold under
+the assumptions stated in the theorem. Consider D1, . . . ,Dn ∈ {±1/
+√
+8d}d×m ⊂ Xm. Note that in this case, we have
+1
+|H|
+X
+i∈H
+∥∇L(θ; Di) − ∇LH(θ)∥2 ≤ 1 ≤ G2.
+Hence, D1, . . . ,Dn is a valid collection of datasets with regard to the theorem statement. Since A is assumed to be
+(f, ϱ)-robust, it guarantees an error less than or equal to ϱ on the honest global loss L(θ; Di, i∈ H). Using the proof
+technique of Proposition 3.1, we can show that (as f < n/2 and |H| = n − f ≤ n)
+ϱ = Ω
+ d
+ε2 |H| m2
+
+= Ω
+ d
+ε2nm2
+
+. (33)
+Step 2: To derive the second term in Ω( f
+n · 1
+ε2m2 ), we remark that all conditions of Proposition 3.3 on ε, δ, ϱ, n, f, m, and A
+are verified. Note also that, similar to Step 1, the datasets considered in the proof Proposition 3.2, scaled by a constant, are
+also valid instances with regard to the theorem statement. Using the proof technique of Proposition 3.2 we can show that
+(since 0 < f < n/2, we have f + 1 ≥ f and n − f ≤ n)
+ϱ = Ω
+ f + 1
+n − f · log (1/δ)
+ε2m2
+
+= eΩ
+ f
+n · 1
+ε2m2
+
+, (34)
+where we ignore the logarithmic term in eΩ(·).
+Step 3: To obtain the third term in Ω
+
+f
+n · G2
+
+, we first remark that Assumption 2.1 holds, as well as all the conditions in
+Proposition 3.2 on n, f, mand A. As the input domain in Proposition 3.2 is a subset of X , using the proof technique of
+Proposition 3.2 we can show that
+ϱ = Ω
+ f
+n · G2
+
+. (35)
+Final step: Combining (33), (34), and (35) proves the theorem, i.e., we obtain that
+ϱ = eΩ
+
+max
+ d
+ε2nm2 , f
+n · 1
+ε2m2 , f
+n · G2
+
+= eΩ
+ d
+ε2nm2 + f
+n · 1
+ε2m2 + f
+n · G2
+
+.
+23
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+B. Robustness Analysis
+In this section, we prove all our claims related to (f, κ)-robustness and SMEA. In Section B.1, we analyze SMEA. In
+Section B.2, we discuss Filter (Diakonikolas et al., 2017; Steinhardt et al., 2018), a related algorithm.
+We first recall the definition of our robustness criterion:
+Definition 4.1. Let n ≥ 1, 0 ≤ f < n/2 and κ ≥ 0. An aggregation rule F is said to be (f, κ)-robust averaging if for any
+vectors x1, . . . , xn ∈ Rd, and any set S ⊆ {1, . . . , n} of size n − f, the output ˆx = F (x1, . . . , xn) satisfies
+∥ˆx − xS∥2 ≤ κ · λmax
+ 
+1
+|S|
+X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+,
+where xS := 1
+|S|
+P
+i∈S xi and λmax denotes the maximum eigenvalue. We refer to κ as the robustness coefficient of F .
+B.1. Smallest Maximum Eigenvalue Averaging (SMEA)
+Given a set of n vectors x1, . . . , xn ∈ Rd, the SMEA algorithm first searches for a set S∗ of cardinality n − f with the
+smallest empirical maximum eigenvalue, i.e.,
+S∗ ∈ argmin
+S⊆{1,..., n
+|S|=n−f
+}
+λmax
+ 
+1
+|S|
+X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+. (36)
+Then the algorithm outputs the average of the inputs in set S∗:
+SMEA(x1, . . . , xn) := 1
+|S∗|
+X
+i∈S∗
+xi. (37)
+Proposition 5.1. Let f < n/2. SMEA is (f, κ)-robust averaging with
+κ = 4f
+n − f
+
+1 + f
+n − 2f
+2
+.
+Proof. Let n ≥ 1 and 0 ≤ f < n/2. Fix a set S ⊆ {1, . . . , n} such that |S| = n − f. Recall the definition of S∗ in (36).
+Denote by xS∗ the output of SMEA defined in (37):
+xS∗ := 1
+|S∗|
+X
+i∈S∗
+xi. (38)
+From (38), we have
+∥xS∗ − xS∥2 =
+
+1
+n − f
+X
+i∈S∗
+xi − 1
+n − f
+X
+i∈S
+xi
+
+2
+=
+
+1
+n − f
+X
+i∈S∗\S
+xi − 1
+n − f
+X
+i∈S\S∗
+xi
+
+2
+=
+
+1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS) + |S∗ \ S|
+n − f (xS∗ − xS)
+
+2
+=
+
+1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS)
+
+2
++ |S∗ \ S|2
+(n − f )2 ∥xS∗ − xS∥2
++ 2|S∗ \ S|
+n − f
+*
+xS∗ − xS, 1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS)
++
+.
+24
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+However, notice that
+1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS) = 1
+n − f
+X
+i∈S∗\S
+xi − 1
+n − f
+X
+i∈S\S∗
+xi − |S∗ \ S|
+n − f (xS∗ − xS)
+= 1
+n − f
+X
+i∈S∗
+xi − 1
+n − f
+X
+i∈S
+xi − |S∗ \ S|
+n − f (xS∗ − xS)
+=
+
+1 − |S∗ \ S|
+n − f
+
+(xS∗ − xS).
+This implies that
+∥xS∗ − xS∥2 =
+
+1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS)
+
+2
++
+"
+|S∗ \ S|2
+(n − f )2 + 2|S∗ \ S|
+n − f
+
+1 − |S∗ \ S|
+n − f
+#
+∥xS∗ − xS∥2
+=
+
+1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS)
+
+2
++
+"
+1 −
+
+1 − |S∗ \ S|
+n − f
+2#
+∥xS∗ − xS∥2
+By rearranging the terms, applying Jensen’s inequality, and using the fact that sup∥v∥≤1 |⟨v, x⟩| = ∥x∥, we obtain
+
+1 − |S∗ \ S|
+n − f
+2
+∥xS∗ − xS∥2 =
+
+1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS)
+
+2
+= sup
+∥v∥≤1
+
+*
+v, 1
+n − f
+X
+i∈S∗\S
+(xi − xS∗ ) − 1
+n − f
+X
+i∈S\S∗
+(xi − xS)
++
+2
+= sup
+∥v∥≤1
+
+1
+n − f
+X
+i∈S∗\S
+⟨v, xi − xS∗ ⟩ − 1
+n − f
+X
+i∈S\S∗
+⟨v, xi − xS⟩
+
+2
+≤ |S∗ \ S| + |S \ S∗|
+(n − f )2 sup
+∥v∥≤1
+
+ X
+i∈S∗\S
+|⟨v, xi − xS∗ ⟩|2 +
+X
+i∈S\S∗
+|⟨v, xi − xS⟩|2
+
+
+≤ |S∗ \ S| + |S \ S∗|
+(n − f )2
+
+ sup
+∥v∥≤1
+X
+i∈S∗\S
+|⟨v, xi − xS∗ ⟩|2 + sup
+∥v∥≤1
+X
+i∈S\S∗
+|⟨v, xi − xS⟩|2
+
+
+≤ 2f
+(n − f )2
+
+ sup
+∥v∥≤1
+X
+i∈S∗\S
+|⟨v, xi − xS∗ ⟩|2 + sup
+∥v∥≤1
+X
+i∈S\S∗
+|⟨v, xi − xS⟩|2
+
+ , (39)
+where the last inequality is due to the fact that |S∗| = |S| = n − f, as we must have
+|S \ S∗| = |S∗ \ S| = |S ∪ S∗| − |S| ≤n − (n − f ) = f. (40)
+The first term on the RHS of (39) can be bounded by construction of S∗, and using the fact that sup∥v∥≤1 ⟨v, M v⟩ =
+λmax(M ):
+sup
+∥v∥≤1
+X
+i∈S∗\S
+|⟨v, xi − xS∗ ⟩|2 ≤ sup
+∥v∥≤1
+X
+i∈S∗
+|⟨v, xi − xS∗ ⟩|2 = sup
+∥v∥≤1
+*
+v,
+X
+i∈S∗
+(xi − xS∗ )(xi − xS∗ )⊤v
++
+= λmax
+ X
+i∈S∗
+(xi − xS∗ )(xi − xS∗ )⊤
+!
+≤ λmax
+ X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+.
+25
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+The second term on the RHS of (39) can be bounded similarly:
+sup
+∥v∥≤1
+X
+i∈S\S∗
+|⟨v, xi − xS⟩|2 ≤ sup
+∥v∥≤1
+X
+i∈S
+|⟨v, xi − xS⟩|2 = λmax
+ X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+.
+Plugging these two bounds back in (39), we obtain
+
+1 − |S∗ \ S|
+n − f
+2
+∥xS∗ − xS∥2 ≤ 4f
+n − f
+1
+n − f λmax
+ X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+.
+Finally, since |S∗ \ S| ≤f (see (40)), we have
+
+1 − |S∗\S|
+n−f
+2
+≥
+
+1 − f
+n−f
+2
+=
+
+n−2f
+n−f
+2
+. We can therefore obtain
+∥xS∗ − xS∥2 ≤ 4f (n − f )
+(n − 2f )2 · λmax
+ 
+1
+|S|
+X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+.
+The proof concludes by noticing that 4f (n−f )
+(n−2f )2 = 4f
+n−f
+
+1 + f
+n−2f
+2
+.
+B.2. Filter Algorithm
+In this section, we present the Filter algorithm (Diakonikolas et al., 2017; Steinhardt, 2018) in Algorithm 2 and discuss its
+robustness properties, stated in Proposition B.1, in the distributed ML context we consider. Recall that Filter was also used
+in (Data & Diggavi, 2021).
+Algorithm 2 Filter algorithm (Diakonikolas et al., 2017; Steinhardt, 2018)
+Input: vectors x1, . . . , xn ∈ Rd, spectral norm bound σ2
+0, constant factor η >0.
+1: Initialize c1, . . . , cn = 1, ˆσc = +∞.
+2: while True do
+3: Compute the empirical mean ˆµc = Pn
+i=1 cixi/ Pn
+i=1 ci.
+4: Compute the empirical covariance ˆΣc = Pn
+i=1 ci(xi − ˆµc)(xi − ˆµc)⊤/ Pn
+i=1 ci.
+5: Compute maximum eigenvalue ˆσ2
+c of ˆΣc and an associated eigenvector ˆvc.
+6: if ˆσ2
+c > η· σ2
+0 then
+7: return ˆµc
+8: else
+9: Compute weight τi = ⟨ˆvc, xi − ˆµc⟩2.
+10: Update ci ← ci(1 − τi/τmax), where τmax = max1≤i≤n τi.
+11: end if
+12: end while
+In Proposition B.1, we recall the robustness guarantees of the Filter procedure (Algorithm 2). The proposition is followed by
+a discussion further below.
+Proposition B.1. Let n ≥ 1, 0 ≤ f < n/2, x1, . . . , xn ∈ Rn, and S ⊆ [n], |S| = n − f. Denote xS := 1
+|S|
+P
+i∈S xi.
+Set the parameters
+σ2
+0 ≥ λmax
+ 
+1
+|S|
+X
+i∈S
+(xi − xS)(xi − xS)⊤
+!
+and
+η = 2n(n − f )/(n − 2f )2.
+Then, the output bx of the Filter procedure (Algorithm 2) with parametersσ2
+0 and η satisfies
+∥bx − xS∥2 ≤ κ · σ2
+0,
+with κ = 4f n
+(n−2f )2 + 2f
+n−f = 6f
+n−2f
+
+1 + f
+n−2f
+
+.
+26
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Proof. The proof follows directly from (Theorem 4.2, (Zhu et al., 2022)) combined with (Lemma 2.2, (Zhu et al., 2022)).
+Discussion. Note that Filter does not satisfy (f, κ)-robust averaging (see Definition 4.1) as its parameter σ2
+0 must depend on
+the maximum eigenvalue of the honest inputs. Indeed, such dependency is precluded by (f, κ)-robust averaging. Moreover,
+in our learning setting, the bound σ2
+0 potentially depends on the noise of stochastic gradients σ2 and the heterogeneity metric
+G2, which are unknown a priori. Thus, devising aggregation rules agnostic to the statistical properties of the honest inputs,
+like SMEA, is even more desirable in our setting.
+27
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+C. Privacy Analysis
+C.1. Preliminaries
+We first recall definitions and useful lemmas on Differential Privacy (DP) and R´enyi Differential Privacy (RDP), including
+the privacy amplification by subsampling (without replacement) results for RDP.
+Definition C.1 (R´enyi Differential Privacy, (Mironov, 2017)). Let α > 1 and ε > 0. A randomized algorithm M is
+(α, ε)-RDP if for any adjacent datasets D, D′ ∈ Xm it holds that
+Dα(M(D)||M(D′)) ≤ ε,
+where Dα(M(D)||M(D′)) := 1
+α−1 log Eθ∼M(D′)
+h
+M(D)(θ)
+M(D′)(θ)
+αi
+is the R´enyi divergence of order α.
+Lemma C.1 (RDP Adpative Composition, (Mironov, 2017)). If M1 that takes the dataset as input is (α, ε1)-RDP , andM2
+that takes the dataset and the output of M1 as input is (α, ε2)-RDP , then their composition is(α, ε1 + ε2)-RDP .
+Lemma C.2 (RDP to DP conversion, (Mironov, 2017)) . If M is (α, ε)-RDP , thenM is (ε + log (1/δ)
+α−1 , δ)-DP for all
+δ ∈ (0, 1).
+Definition C.2 (ℓ2-sensitivity, (Dwork et al., 2014)). The ℓ2-sensitivity of a function g : X m → Rd is
+∆(g) := sup
+D,D′ adjacent
+∥g(D) − g(D′)∥ .
+Lemma C.3 (RDP for Gaussian Mechanisms, (Mironov, 2017)). If g : X m → Rd has ℓ2-sensitivity smaller than ∆, then
+the Gaussian mechanism Gσ,g = g + N (0, σ2Id) is (α, ∆2
+2σ2 α)-RDP .
+Definition C.3 (Subsampling Mechanism). Consider a dataset D ⊆ Xm, a constant b ∈ [m], and define r := b/m. The
+procedure subsampler : X m → Xb selects b points at random and without replacement from D.
+Lemma C.4 (RDP for Subsampled Mechanisms, (Wang et al., 2019a)). Let α ∈ N, α≥ 2, and r ∈ (0, 1) the sampling
+parameter. If M is (α, ε(α))-RDP , thenM ◦subsampler is (α, ε′(α))-RDP , with
+ε′(α) = 1
+α − 1 log
+
+1 + r2
+α
+2
+
+min
+n
+4(eε(2) − 1), eε(2) min {2, (eε(∞) − 1)2}
+o
++
+αX
+j=3
+rj
+α
+j
+
+e(j−1)ε(j) min {2, (eε(∞) − 1)j}
+
+. (41)
+Lemma C.5 (Real-valued RDP for Subsampled Mechanisms). Let α ∈ R, α >1, and r ∈ (0, 1) the sampling parameter. If
+M is (α, ε(α))-RDP , thenM ◦subsampler is (α, ε′′(α))-RDP , with
+ε′′(α) = (1 − α + ⌊α⌋) ⌊α⌋ −1
+α − 1 ε′(⌊α⌋) + (α − ⌊α⌋) ⌈α⌉ −1
+α − 1 ε′(⌈α⌉),
+where ε′ is defined in Equation (41).
+Proof. The result follows immediately from Corollary 10 and Remark 7 in (Wang et al., 2019a).
+C.2. Proof of Theorem 4.1 and Theorem C.1
+We state below the DP guarantees without approximation:
+Theorem C.1. Let δ ∈ (0, 1). Algorithm 1 is (ε∗, δ)-DP with
+ε∗ = inf
+α>1
+
+T ε1(α) + log (1/δ)
+α − 1
+
+,
+where for every α >1,
+
+
+
+ε1(α) := (1 − α + ⌊α⌋) ⌊α⌋−1
+α−1 ε′(⌊α⌋) + (α − ⌊α⌋) ⌈α⌉−1
+α−1 ε′(⌈α⌉),
+ε′(α) := 1
+α−1 log
+
+1 + r2 α
+2
+
+min
+
+4(eε(2) − 1), 2eε(2)	
++ 2 Pα
+j=3 rj α
+j
+
+e(j−1)ε(j)
+
+,
+ε(α) :=
+  2C
+b
+2 α
+2σ2
+DP
+.
+28
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+θt ˜g(i)
+t θt+1
+(I) (II)
+Figure 1. (I): Subsampling + Gaussian mechanism, (II): Post-processing.
+Proof. To derive the above DP guarantees, we first track the privacy loss for a single iteration of Algorithm 1 using RDP.
+Then we apply adaptive composition to track the end-to-end privacy loss of the algorithm. Finally, we optimize over the
+privacy loss for several levels of RDP to compute the noise parameter needed for DP.
+Single-iteration privacy. First, we analyze a single fixed iteration t ∈ {0, . . . , T− 1} of Algorithm 1. To do so, we divide
+the analysis into two steps, i.e. Step I and Step II, as shown in Figure 1.
+Step (I): This step corresponds to lines 2-6 in Algorithm 1. Recall that our definition of DP for a distribution algorithm
+(given in Definition 2.3) requires that the transcript of communications of each worker satisfies (centralized) (ε, δ)-DP with
+respect to their own data. Thus, since the workers only send their local momentum to the server, we show that for any i ∈ H
+computing ˜g(i)
+t from Di and θt is RDP for any α >1.
+Let i ∈ H, α >1 and r = b/m. First, we show that ∆ := 2C
+b is an upper bound of the ℓ2-sensitivity of the mini-batch
+(clipped) averaging. To see this, consider two adjacent training sets Di, ˜Di, the mini-batch average (after clipping) g(i)
+t
+computed on mini-batch S(i)
+t ⊆ Di, and ˜g(i)
+t the analogous quantities for ˜Di. Note that S(i)
+t and ˜S(i)
+t differ by one element
+at most. Without loss of generality, let x∗ ∈ S(i)
+t , ˜x∗ ∈ ˜S(i)
+t be the only two elements that differ from S(i)
+t to ˜S(i)
+t . Thanks
+to the triangle inequality, we have that
+g(i)
+t − ˜g(i)
+t
+ =
+ 1
+b
+X
+x∈S(i)
+t
+Clip (∇ℓ(θt, x); C) − 1
+b
+X
+x∈ ˜S(i)
+t
+Clip (∇ℓ(θt, x); C)
+
+=
+
+1
+b Clip (∇ℓ(θt, x∗); C) − 1
+b Clip (∇ℓ(θt, ˜x∗); C)
+
+≤ 1
+b ∥Clip (∇ℓ(θt, x∗); C)∥ + 1
+b ∥Clip (∇ℓ(θt, ˜x∗); C)∥
+≤ 2C
+b .
+Thanks to the above, the sensitivity of computing the gradient g(i)
+t when given a batch of b point S(i)
+t is upper bounded by
+∆ = 2C
+b . Accordingly, invoking Lemma C.3, the Gaussian mechanism used in Line 6 of Algorithm 1 is (α, α∆2
+2σ2
+DP
+)-RDP.
+Furthermore, by Lemma C.5, for every j ∈ H, the corresponding mechanism Mj taking the dataset Dj and θt as input and
+returning ˜g(j)
+t is (α, ε1(α))-RDP with
+ε1(α) := (1 − α + ⌊α⌋) ⌊α⌋ −1
+α − 1 ε′(⌊α⌋) + (α − ⌊α⌋) ⌈α⌉ −1
+α − 1 ε′(⌈α⌉). (42)
+Where
+ε′(α) = 1
+α − 1 log
+
+1 + r2
+α
+2
+
+min
+n
+4(eε(2) − 1), eε(2) min {2, (eε(∞) − 1)2}
+o
++
+αX
+j=3
+rj
+α
+j
+
+e(j−1)ε(j) min {2, (eε(∞) − 1)j}
+
+,
+and ε(α) := α∆2
+2σ2
+DP
+=
+  2C
+b
+2 α
+2σ2
+DP
+. Furthermore, since ε(∞) = +∞, we get
+ε′(α) = 1
+α − 1 log
+
+1 + r2
+α
+2
+
+min
+n
+4(eε(2) − 1), 2eε(2)
+o
++ 2
+αX
+j=3
+rj
+α
+j
+
+e(j−1)ε(j)
+
+. (43)
+29
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Step (II): This step consists in computing the local momentums from the noisy gradients, and then aggregating the
+momentums and updating the model accordingly. As this process does not have direct access to the datasets Di, i∈ H, it
+should be considered as a post-processing operation for Step (I). As RDP is preserved by post-processing (Mironov, 2017),
+we conclude that a single iteration of Algorithm 1 is (α, ε1(α))-RDP with respect to each worker’s data for any α >1, with
+ε1(α) as defined above.
+End-to-end privacy. We can now compute the end-to-end DP of our algorithm. First, invoking Lemma C.1 and the
+per-iteration RDP guarantee of Algorithm 1, we obtain that Algorithm 1 is (α, T ε1(α))-RDP towards the server, for any
+α >1. Next, by Lemma C.2, we deduce that Algorithm 1 is (ε∗(α), δ)-DP towards the server for every δ ∈ (0, 1), α >1,
+with
+ε∗(α) := T ε1(α) + log (1/δ)
+α − 1 .
+This implies that, for any δ ∈ (0, 1), Algorithm 1 is (ε∗, δ)-DP with
+ε∗ := inf
+α>1
+ε∗(α) = inf
+α>1
+
+T ε1(α) + log (1/δ)
+α − 1
+
+.
+The above concludes the proof.
+We now prove the (closed-form) approximate DP guarantees ofSAFE -DSHB in Theorem 4.1, as a corollary of Theorem C.1.
+Theorem 4.1. Consider Algorithm 1. Let ε >0, δ∈ (0, 1) be such that ε ≤ log (1/δ). There exists a constant k >0 such
+that, for a sufficiently small batch size b, when σDP ≥ k · 2C
+b max {1,
+b
+√
+T log (1/δ)
+mε }, Algorithm 1 is (ε, δ)-DP .
+Proof. Suppose that b
+m is sufficiently small. Let ε > 0 and δ ∈ (0, 1) be such that ε ≤ log (1/δ). Finally consider
+∆, ϵ∗(·), ϵ1(·), ϵ′(·), and ϵ(·) as defined in the statement and the proof of Theorem C.1. Below, we show that there exists
+k >0 such that, when σDP ≥ k · 2C/b max {1, b
+√
+T log (1/δ)/mε}, Algorithm 1 ensures (ε, δ)-DP towards an honest-but-
+curious server. First note that, when σDP ≥ 2C/b, we have
+ε(2) = ∆2
+σ2
+DP
+= (2C/b)2
+σ2
+DP
+≤ 1.
+Since h := x 7→ 1
+x (ex − 1) is non-decreasing on (0, +∞), this also implies that 1
+ε(2) (eε(2) − 1) = h(ε(2)) ≤ h(1) =
+e − 1 ≤ 2. As a result, we have
+min
+n
+4(eε(2) − 1), 2eε(2)
+o
+≤ 4(eε(2) − 1) ≤ 8 ε(2). (44)
+Recall that
+ε′(α) = 1
+α − 1 log
+
+1 + r2
+α
+2
+
+min
+n
+4(eε(2) − 1), 2eε(2)
+o
++ 2
+αX
+j=3
+rj
+α
+j
+
+e(j−1)ε(j)
+
+. (45)
+Therefore, since we assume that b
+m is sufficiently small (r ≪ 1), the dominating term inside the logarithm is the term in r2.
+Using log (1 +x) ≤ x, there exists a constant k′ such that
+ε′(α) ≤ 1
+α − 1
+
+r2
+α
+2
+
+min
+n
+4(eε(2) − 1), 2eε(2)
+o
++ 2
+αX
+j=3
+rj
+α
+j
+
+e(j−1)ε(j)
+
+
+≤ k′
+α − 1
+
+r2
+α
+2
+
+min
+n
+4(eε(2) − 1), 2eε(2)
+o
+= k′
+α − 1 O
+
+r2α(α − 1) min
+n
+4(eε(2) − 1), 2eε(2)
+o
+.
+Hence substituting from (44), we get
+ε′(α) ≤ 8k′r2αε(2) = 8k′r2 ∆2
+σ2
+DP
+α.
+30
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+This directly implies that
+ε1(α) = (1 − α + ⌊α⌋) ⌊α⌋ −1
+α − 1 ε′(⌊α⌋) + (α − ⌊α⌋) ⌈α⌉ −1
+α − 1 ε′(⌈α⌉)
+≤ 8k′r2 ∆2
+σ2
+DP
+h
+(1 − α + ⌊α⌋) ⌊α⌋ −1
+α − 1 ⌊α⌋ + (α − ⌊α⌋) ⌈α⌉ −1
+α − 1 ⌈α⌉
+i
+. (46)
+Now, recall that α − 1 ≤ ⌊α⌋ ≤α and α ≤ ⌈α⌉ ≤α + 1. We will prove that ε1(α) ≤ 32k′r2 ∆2
+σ2
+DP
+by distinguishing two
+cases:
+Case α ∈ (1, 2): Since α >1, we have ⌊α⌋ ≥1 and therefore α−⌊α⌋/α−1 ≤ 1. We therefore have from Equation (46)
+ε1(α) ≤ 8k′r2 ∆2
+σ2
+DP
+h
+(1 − α + ⌊α⌋) ⌊α⌋ −1
+α − 1 ⌊α⌋ + (α − ⌊α⌋) ⌈α⌉ −1
+α − 1 ⌈α⌉
+i
+≤ 8k′r2 ∆2
+σ2
+DP
+h
+(1 − α + ⌊α⌋)| {z }
+≤1
+⌊α⌋ −1
+α − 1| {z }
+≤1
+⌊α⌋ + (⌈α⌉ −1)| {z }
+≤α
+⌈α⌉
+i
+≤ 8k′r2 ∆2
+σ2
+DP
+h
+⌊α⌋ + α ⌈α⌉
+i
+≤
+(i)
+8k′r2 ∆2
+σ2
+DP
+h
+α + 2α
+i
+= 24k′r2 ∆2
+σ2
+DP
+α,
+where (i) is due to ⌈α⌉ ≤2 because α <2.
+Case α ∈ [2, +∞):
+Since α ≥ 2, we have both ⌊α⌋ ≤ ⌈α⌉ ≤α + 1 ≤ 2α and ⌊α⌋ −1 ≤ ⌈α⌉ −1 ≤ 2(α − 1). Therefore, we have from
+Equation (46) that
+ε1(α) ≤ 8k′r2 ∆2
+σ2
+DP
+h
+(1 − α + ⌊α⌋) ⌊α⌋ −1
+α − 1 ⌊α⌋ + (α − ⌊α⌋) ⌈α⌉ −1
+α − 1 ⌈α⌉
+i
+≤ 8k′r2 ∆2
+σ2
+DP
+h
+(1 − α + ⌊α⌋)4α + (α − ⌊α⌋)4α
+i
+= 32k′r2 ∆2
+σ2
+DP
+.
+We have now proved for everyα >1 that ε1(α) ≤ 32k′r2 ∆2
+σ2
+DP
+. This implies that
+ε∗ = inf
+α>1
+
+T ε1(α) + log (1/δ)
+α − 1
+
+≤ inf
+α>1
+
+32k′r2 ∆2
+σ2
+DP
+αT + log (1/δ)
+α − 1
+
+.
+The above (convex) optimization problem is solved for α = α∗ := 1 + σDP
+q
+log (1/δ)
+32k′r2∆2T . Remark that the constraint α >1
+is satisfied at α∗. Additionally, the objective at α = α∗ is equal to
+32k′r2 ∆2
+σ2
+DP
+α∗T + log (1/δ)
+α∗ − 1 = 32k′r2 ∆2
+σ2
+DP
+T + 2r∆
+p
+32k′ T log (1/δ)
+σDP
+.
+Therefore, using the assumption ε ≤ log (1/δ), when σDP ≥
+6C
+√
+32k′T log (1/δ)
+mε = 3r∆
+√
+32k′T log (1/δ)
+ε , we have
+ε∗ ≤ 32k′r2 ∆2
+σ2
+DP
+T + 2r∆
+p
+32k′ T log (1/δ)
+σDP
+≤ ε2
+9 log (1/δ) + 2/3 ε ≤ (1/9 + 2/3)ε ≤ ε.
+Recall that to derive this last inequality, we overall needed σDP ≥ 2C/b = ∆ and σDP ≥
+6C
+√
+32k′T log (1/δ)
+mε =
+3r∆
+√
+32k′T log (1/δ)
+ε . Therefore, by choosing k := max {1, 3
+√
+32k′}, we can now conclude that, when σDP ≥
+k · 2C/b max {1, b
+√
+T log (1/δ)/mε}, Algorithm 1 is (ε, δ)-DP.
+31
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+D. Upper Bounds
+D.1. Proof Outline
+Our analysis of SAFE -DSHB (Algorithm 1), inspired from (Farhadkhani et al., 2022), consists of three elements: (i)
+Momentum drift (Lemma D.1), (ii) Momentum deviation (Lemma D.2), and (iii) Descent bound (Lemma D.3). We combine
+these elements to obtain the final convergence result stated in Theorem 4.2, and the matching upper bound stated in
+Corollary 5.1.
+Notation. Recall that for each step t, for each honest worker wi,
+m(i)
+t = βt−1m(i)
+t−1 + (1 − βt−1)˜g(i)
+t , (47)
+˜g(i)
+t = g(i)
+t + ξ(i)
+t ; ξ(i)
+t ∼ N(0, σ2
+DPId), (48)
+where we initialize m(i)
+0 = 0. As we analyze Algorithm 1 with aggregation F , we denote
+Rt := F
+
+m(1)
+t , . . . , m(n)
+t
+
+, (49)
+θt+1 = θt − γtRt. (50)
+Throughout, we denote the loss function over dataset Di by Li = L(· ; Di). Also, we denote by Pt the history from steps 0
+to t. Specifically,
+Pt :=
+n
+θ0, . . . , θt; m(i)
+1 , . . . , m(i)
+t−1; i ∈ [n]
+o
+.
+By convention, P1 = {θ0}. We denote by Et [·] and E [·] the conditional expectation E [· Pt] and the total expectation,
+respectively. Thus, E [·] = E1 [· · ·ET [·]].
+D.1.1. M OMENTUM DRIFT
+Along the trajectory θ0, . . . , θt, the honest workers’ local momentums may drift away from each other. The drift has three
+distinct sources: (i) noise injected by the DP mechanism, (ii) gradient dissimilarity induced by data heterogeneity, and (iii)
+stochasticity of the mini-batch gradients. The aforementioned drift of local momentums can be exploited by the Byzantine
+adversaries to maliciously bias the aggregation output.
+In this section, we will control the growth of the drift ∆t between momentums, which we define as
+∆t := λmax
+ 
+1
+|H|
+X
+i∈H
+(m(i)
+t − mt)(m(i)
+t − mt)⊤
+!
+, (51)
+where λmax denotes the maximum eigenvalue, and mt := 1
+|H|
+P
+i∈H m(i)
+t denotes the average honest momentum. We
+show in Lemma D.1 below that the growth of the drift ∆t of the momentums can be controlled by tuning the momentum
+coefficient βt. The full proof can be found in Appendix D.5.2.
+Lemma D.1. Suppose that assumptions 2.2 and 2.3 hold. Consider Algorithm 1. For every t ∈ {0, . . . , T− 1}, we have
+E [∆t+1] ≤ βt E [∆t] + 2(1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ (1 − βt)G2
+cov,
+where mt := 1
+|H|
+P
+i∈H m(i)
+t , σ2
+b := 2(1 − b
+m ) σ2
+b , and G2
+cov := supθ∈Rd sup∥v∥≤1
+1
+|H|
+P
+i∈H ⟨v, ∇Li(θ) − ∇LH(θ)⟩2.
+The dimension factor d due to DP noise is divided by n − f, which would not have been possible without leveraging the
+Gaussian nature of the noise. This dependence will prove crucial to match our lower bound. To leverage Gaussianity, we use
+a concentration argument on the empirical covariance matrix of Gaussian random variables, stated in Lemma D.6.
+The remaining term G2
+cov of the upper bound is only due to data heterogeneity. An important distinction from (Karimireddy
+et al., 2022) is that G2
+cov is a tighter bound on heterogeneity, compared to G2 the bound on the average squared distance
+from Assumption 2.1. This is because the drift ∆t is not an average squared distance, but rather a bound on average squared
+distances of every projection on the unit ball. Controlling this quantity requires a covering argument (stated in Lemma D.4).
+32
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+D.1.2. M OMENTUM DEVIATION
+Next, we study the momentum deviation; i.e., the distance between the average honest momentum mt and the true gradient
+∇LH(θt) in an arbitrary step t. Specifically, we define momentum deviation to be
+δt := mt − ∇LH (θt) . (52)
+Also, we introduce the error between the aggregate Rt and mt := 1
+|H|
+P
+i∈H m(i)
+t the average momentum of honest workers
+for the case. Specifically, when defining the error
+ϵt := Rt − mt, (53)
+we get the following bound on the momentum deviation in Lemma D.2, proof of which can be found in Appendix D.5.3.
+Lemma D.2. Suppose that assumptions 2.2 and 2.3 hold and that LH is L-smooth. Consider Algorithm 1. For all
+t ∈ {0, . . . , T− 1}, we have
+E
+h
+∥δt+1∥2
+i
+≤ β2
+t (1 + γtL)(1 + 4γtL) E
+h
+∥δt∥2
+i
++ 4γtL(1 + γtL)β2
+t E
+h
+∥∇LH(θt)∥2
+i
++ (1 − βt)2 σ2
+DP
+(n − f ) + 2γtL(1 + γtL)β2
+t E
+h
+∥ϵt∥2
+i
+,
+where σ2
+DP := 2
+ 
+1 − b
+m
+ σ2
+b + d · σ2
+DP.
+D.1.3. D ESCENT BOUND
+Finally, we bound the progress made at each learning step in minimizing the lossLH using Algorithm 1. From (50) and (49),
+we obtain that, for each step t,
+θt+1 = θt − γtRt = θt − γtmt − γt(Rt − mt),
+Furthermore, by (53), Rt − mt = ϵt. Thus, for all t,
+θt+1 = θt − γtmt − γtϵt. (54)
+This means that Algorithm 1 can actually be treated as distributed SGD with a momentum term that is subject to perturbation
+proportional to ϵt at each step t. This perspective leads us to Lemma D.3, proof of which can be found in Appendix D.5.4.
+Lemma D.3. Assume that LH is L-smooth. Consider Algorithm 1. For any t ∈ [T ], we have
+E
+
+LH(θt+1) − LH(θt)
+
+≤ −γt
+2 (1 − 4γtL) E
+h
+∥∇LH(θt)∥2
+i
++ γt (1 + 2γtL) E
+h
+∥δt∥2
+i
++ γt (1 + γtL) E
+h
+∥ϵt∥2
+i
+.
+Putting all of the previous lemmas together, we prove Theorem 4.2 in Section D.2. We then prove Corollary 5.1 in
+Section D.3, and its non-convex version in Corollary D.1 in Section D.4.
+D.2. Proof of Theorem 4.2
+We recall the theorem statement below for convenience. Recall that
+L∗ = inf
+θ ∈Rd
+LH(θ), L0 = LH(θ0) − L∗, a1 = 240, a2 = 480, a3 = 5760, and a4 = 270.
+Theorem 4.2. Suppose that assumptions 2.2 and 2.3 hold true, and that LH is L-smooth. Let F satisfy the condition of
+(f, κ)-robust averaging. We let
+σ2 = σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP
+
+1 + d
+n − f
+
+,
+where σ2
+b = 2(1 − b
+m ) σ2
+b . Consider Algorithm 1 with T ≥ 1, the learning rates γt and momentum coefficients βt specified
+below. We prove that the following holds, where the expectationE [·] is over the randomness of the algorithm.
+33
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+1. Strongly convex: Assume that LH is µ-strongly convex. If γt = 10
+µ(t+a1 L
+µ ) and βt = 1 − 24Lγt then
+E [LH(θT ) − L∗] ≤ 4a1κG2
+cov
+µ + 2a2
+1Lσ2
+µ2T + 2a2
+1L2L0
+µ2T 2 .
+2. Non-convex: If γ = min
+n
+1
+24L ,
+√a4L0
+2σ√a3LT
+o
+and βt = 1 − 24Lγ then
+E
+h
+∥∇LH(ˆθ)∥2
+i
+≤ a2κG2
+cov +
+√a3a4LL0σ√
+T
++ a4LL0
+T .
+We prove Theorem 4.2 in the strongly convex case in Section D.2.1, and in the non-convex case in Section D.2.2.
+D.2.1. S TRONGLY CONVEX CASE
+Proof. Let Assumption 2.2 hold and assume that LH is L-smooth and µ-strongly convex, and that F is a (f, κ)-robust
+averaging aggregation rule. Let t ∈ {0, . . . , T− 1}. We set the learning rate and momentum schedules to be
+γt = 10
+µ(t + a1 L
+µ ) , βt = 1 − 24Lγt, (55)
+where a1 := 240. Note that we have
+γt ≤ γ0 = 10
+µ240 L
+µ
+= 1
+24L . (56)
+To obtain the convergence result we define the Lyapunov function to be
+Vt :=
+
+t + a1
+L
+µ
+2
+E
+h
+LH(θt) − L∗ + z1
+L ∥δt∥2 + κ · z2
+L ∆t
+i
+, (57)
+where a1 = 240 , z1 = 1
+16, and z2 = 2. Throughout the proof, we denote ˆt := t + a1 L
+µ . Therefore, we have γt = 10
+µˆt.
+Consider also the auxiliary sequence Wt defined as
+Wt := E
+h
+LH(θt) − L∗ + z1
+L ∥δt∥2 + κ · z2
+L ∆t
+i
+. (58)
+Therefore, we have
+Vt+1 − Vt = (ˆt + 1)2Wt+1 − ˆt2Wt = (ˆt + 1)2Wt+1 − (ˆt2 + 2ˆt + 1)Wt + (2ˆt + 1)Wt
+= (ˆt + 1)2(Wt+1 − Wt) + (2ˆt + 1)Wt. (59)
+We now bound the quantity Wt+1 − Wt below.
+Invoking Lemma D.1. Upon substituting from Lemma D.1, we obtain
+E
+h
+κ · z2
+L ∆t+1 − κ · z2
+L ∆t
+i
+≤ κ · z2
+L βt E [∆t] + 2κ · z2
+L (1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ κ · z2
+L (1 − βt)G2
+cov
+− κ · z2
+L E [∆t] . (60)
+Invoking Lemma D.2. Upon substituting from Lemma D.2, we obtain
+E
+h z1
+L ∥δt+1∥2 − z1
+L ∥δt∥2
+i
+≤ z1
+L β2
+t ct E
+h
+∥δt∥2
+i
++ 4z1γt(1 + γtL)β2
+t E
+h
+∥∇LH(θt)∥2
+i
++ z1
+L (1 − βt)2 σ2
+DP
+n − f
++ 2z1γt(1 + γtL)β2
+t E
+h
+∥ϵt∥2
+i
+− z1
+L E
+h
+∥δt∥2
+i
+, (61)
+34
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+where we introduced the following quantity for simplicity
+ct = (1 + γtL) (1 + 4γtL) = 1 + 5γtL + 4γ2
+t L2. (62)
+Invoking Lemma D.3. Substituting from Lemma D.3, we obtain
+E
+
+LH(θt+1) − LH(θt)
+
+≤ −γt
+2 (1 − 4γtL) E
+h
+∥∇LH(θt)∥2
+i
++ γt (1 + 2γtL) E
+h
+∥δt∥2
+i
++ γt (1 + γtL) E
+h
+∥ϵt∥2
+i
+.
+(63)
+Substituting from (60), (61) and (63) in (58), we obtain
+Wt+1 − Wt = E
+
+LH(θt+1) − LH(θt)
+
++ E
+h z1
+L ∥δt+1∥2 − z1
+L ∥δt∥2
+i
++ E
+h
+κ · z2
+L ∆t+1 − κ · z2
+L ∆t
+i
+≤ −γt
+2 (1 − 4γtL) E
+h
+∥∇LH(θt)∥2
+i
++ γt (1 + 2γtL) E
+h
+∥δt∥2
+i
++ γt (1 + γtL) E
+h
+∥ϵt∥2
+i
++ z1
+L β2
+t ct E
+h
+∥δt∥2
+i
++ 4z1γt(1 + γtL)β2
+t E
+h
+∥∇LH(θt)∥2
+i
++ z1
+L (1 − βt)2 σ2
+DP
+n − f
++ 2z1γt(1 + γtL)β2
+t E
+h
+∥ϵt∥2
+i
+− z1
+L E
+h
+∥δt∥2
+i
++ κ · z2
+L βt E [∆t] + 2κ · z2
+L (1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ κ · z2
+L (1 − βt)G2
+cov
+− κ · z2
+L E [∆t] . (64)
+Upon rearranging the R.H.S. in (64) we obtain that
+Wt+1 − Wt ≤ −γt
+2
+ 
+(1 − 4γtL) − 8z1(1 + γtL)β2
+t
+
+E
+h
+∥∇LH(θt)∥2
+i
++ z1
+L (1 − βt)2 σ2
+DP
+n − f
+− z1γt
+
+− 1
+z1
+(1 + 2γtL) − 1
+γtL β2
+t ct + 1
+γtL
+
+E
+h
+∥δt∥2
+i
++ γt
+ 
+1 + γtL + 2z1(1 + γtL)β2
+t
+
+E
+h
+∥ϵt∥2
+i
+− κ · z2
+L (1 − βt) E [∆t] + 2κ · z2
+L (1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ κ · z2
+L (1 − βt)G2
+cov. (65)
+Since we assume F to be (f, κ)-robust averaging, we can bound E
+h
+∥ϵt∥2
+i
+as follows. Starting from the definition of ϵt, we
+have
+∥ϵt∥2 = ∥Rt − mt∥2 =
+F (m(1)
+t , . . . , m(n)
+t ) − mt
+
+2
+≤ κ · λmax
+ 
+1
+|H|
+X
+i∈H
+(m(i)
+t − mt)(m(i)
+t − mt)⊤
+!
+= κ · ∆t.
+Then taking total expectations above gives the bound
+E
+h
+∥ϵt∥2
+i
+≤ κ · E [∆t] .
+35
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Using the bound above in Equation (65), and then rearranging terms, yields
+Wt+1 − Wt ≤ −γt
+2
+ 
+(1 − 4γtL) − 8z1(1 + γtL)β2
+t
+
+E
+h
+∥∇LH(θt)∥2
+i
++ z1
+L (1 − βt)2 σ2
+DP
+n − f
+− z1γt
+
+− 1
+z1
+(1 + 2γtL) − 1
+γtL β2
+t ct + 1
+γtL
+
+E
+h
+∥δt∥2
+i
++ κγt
+ 
+1 + γtL + 2z1(1 + γtL)β2
+t
+
+E [∆t]
+− κ · z2
+L (1 − βt) E [∆t] + 2κ · z2
+L (1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ κ · z2
+L (1 − βt)G2
+cov
+= − γt
+2
+ 
+(1 − 4γtL) − 8z1(1 + γtL)β2
+t
+
+E
+h
+∥∇LH(θt)∥2
+i
++ z1
+L (1 − βt)2 σ2
+DP
+n − f
+− z1γt
+
+− 1
+z1
+(1 + 2γtL) − 1
+γtL β2
+t ct + 1
+γtL
+
+E
+h
+∥δt∥2
+i
+− κz2γt
+ 1
+γtL (1 − βt) − 1
+z2
+ 
+1 + γtL + 2z1(1 + γtL)β2
+t
+
+E [∆t]
++ 2κ · z2
+L (1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ κ · z2
+L (1 − βt)G2
+cov.
+For simplicity, we define
+A := 1
+2 (1 − 4γtL) − 8z1(1 + γtL)β2
+t , (66)
+B := − 1
+z1
+(1 + 2γtL) − 1
+γtL β2
+t ct + 1
+γtL , (67)
+and
+C := 1
+γtL (1 − βt) − 1
+z2
+ 
+1 + γtL + 2z1(1 + γtL)β2
+t
+
+, (68)
+Denote also
+σ2 := σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+.
+Recall that, as z1 = 1
+16 and z2 = 2, and σ2
+DP = σ2
+b + dσ2
+DP, we have
+σ2 ≥ z1
+σ2
+DP
+n − f + 2κ · z2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+.
+Thus, substituting the above variables, we obtain
+Wt+1 − Wt ≤ −Aγt E
+h
+∥∇LH(θt)∥2
+i
+− z1Bγt E
+h
+∥δt∥2
+i
+− κ · z2Cγ t E [∆t]
++ 1
+L (1 − βt)2σ2 + κ · z2
+L (1 − βt)G2
+cov. (69)
+We now analyze below the terms A, B and C on the RHS of (69).
+Term A. Recall from (56) that γt ≤ 1
+24L. Upon using this in (66), and the facts that z1 = 1
+16 and β2
+t ≤ 1, we obtain that
+A ≥ 1
+2 (1 − 4γtL) − 8z1(1 + γtL) ≥ 1
+2 (1 − 4 × 1
+24 ) − 8
+16 (1 + 1
+24 ) ≥ 1
+10 . (70)
+Term B. Substituting ct from (62) in (67) we obtain that
+B = − 1
+z1
+(1 + 2γtL) − 1
+γtL β2
+t
+ 
+1 + 5γtL + 4γ2
+t L2
++ 1
+γtL
+= 1
+γtL
+ 
+1 − β2
+− 1
+z1
+ 
+1 + 2γtL + 5z1β2
+t + 4z1β2
+t γtL
+
+.
+36
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Using the facts that βt ≤ 1 and γt ≤ 1
+24L, and then substituting z1 = 1
+16 we obtain
+B ≥ 1
+γtL (1 − β2
+t ) − 16
+
+1 + 2
+24 + 5
+16 + 4
+24 × 16
+
+≥ 1
+γtL (1 − β2
+t ) − 23 ≥ 1
+γtL (1 − βt) − 23 = 1. (71)
+where the last equality follows from the fact that 1 − βt = 24γtL.
+Term C. Substituting z1 = 1
+16 , z2 = 2 in (68), and then using the facts that βt ≤ 1 and γt ≤ 1
+24L, we obtain
+C = 1
+γtL (1 − βt) − 1
+2
+ 
+1 + γtL + (2 × 16)(1 + γtL)β2
+t
+
+≥ 1
+γtL (1 − βt) − 1
+2
+
+1 + 1
+24 + 32(1 + 1
+24 )
+
+≥ 1
+γtL (1 − βt) − 18 = 6, (72)
+where the last equality follows from the fact that 1 − βt = 24γtL.
+Combining terms A, B, and C. Finally, substituting from (70), (71), and (72) in (69) (and recalling that z2 = 2) we obtain
+that
+Wt+1 − Wt ≤ −γt
+10 E
+h
+∥∇LH(θt)∥2
+i
+− z1γt E
+h
+∥δt∥2
+i
+− 6κz2γt E [∆t]
++ 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov. (73)
+Since LH is µ-strongly convex, we have (Karimi et al., 2016) for any θ ∈ Rd that
+∥∇LH(θ)∥2 ≥ 2µ(L(θ) − L∗). (74)
+Plugging (74) in (73) above, and then recalling that L ≥ µ, yields
+Wt+1 − Wt ≤ −µγt
+5 E [LH(θt) − L∗] − z1γt E
+h
+∥δt∥2
+i
+− 6κz2γt E [∆t]
++ 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov
+≤ −µγt
+5 E
+
+LH(θt) − L∗ + z1
+µ ∥δt∥2 + κ · z2
+µ ∆t
+
++ 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov
+≤ −µγt
+5 E
+h
+LH(θt) − L∗ + z1
+L ∥δt∥2 + κ · z2
+L ∆t
+i
++ 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov
+= − µγt
+5 Wt + 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov.
+Upon plugging the above bound back in Equation (59), rearranging terms and substituting 1 − βt = 24Lγt, we obtain
+Vt+1 − Vt ≤ (ˆt + 1)2
+
+− µγt
+5 Wt + 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov
+
++ (2ˆt + 1)Wt
+= −
+h
+(ˆt + 1)2 µγt
+5 − (2ˆt + 1)
+i
+Wt + (ˆt + 1)2
+L (24Lγt)2σ2 + κ · 2(ˆt + 1)2
+L (24Lγt)G2
+cov.
+Recall however that γt = 10
+µˆt as ˆt = t + a1 L
+µ . Recall that we denote a1 = 24 × 10 = 240. Substituting γt above yields
+Vt+1 − Vt ≤ (ˆt + 1)2
+
+− µγt
+5 Wt + 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov
+
++ (2ˆt + 1)Wt
+= −
+
+2 (ˆt + 1)2
+ˆt − (2ˆt + 1)
+
+Wt + a2
+1L (ˆt + 1)2
+µ2ˆt2 σ2 + 2a1κ · (ˆt + 1)2
+µˆt G2
+cov.
+Observe that 2 (ˆt+1)2
+ˆt ≥ 2(ˆt + 1) > 2ˆt + 1, implying that the first term above is negative:
+Vt+1 − Vt ≤ a2
+1L (ˆt + 1)2
+µ2ˆt2 σ2 + 2a1κ · (ˆt + 1)2
+µˆt G2
+cov.
+37
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Observe now that, as ˆt = t + a1 L
+µ ≥ a1 = 240 (because L ≥ µ), we have (ˆt + 1)2 ≤ (1 + 1
+240 )2ˆt2 ≤ 2ˆt2. Plugging this
+bound in the inequality above gives
+Vt+1 − Vt ≤ 2a2
+1L
+µ2 σ2 + 4a1κ ·
+ˆt
+µ G2
+cov.
+Therefore, we have for every t ∈ {0, . . . , T− 1} that
+Vt+1 − V0 =
+tX
+k=0
+(Vk+1 − Vk) ≤ (t + 1)2a2
+1L
+µ2 σ2 +
+ tX
+k=0
+ˆk
+!
+4a1κ
+µ G2
+cov.
+Since Pt
+k=0
+ˆk = Pt
+k=0(k + a1 L
+µ ) = Pt
+k=0 k + a1(t + 1)L
+µ = t(t+1)
+2 + a1(t + 1)L
+µ , we obtain
+Vt+1 − V0 =
+tX
+k=0
+(Vk+1 − Vk) ≤ (t + 1)2a2
+1L
+µ2 σ2 +
+ t(t + 1)
+2 + a1(t + 1)L
+µ
+ 4a1κ
+µ G2
+cov
+= (t + 1)2a2
+1L
+µ2 σ2 + (t + 1)
+ t
+2 + a1
+L
+µ
+ 4a1κ
+µ G2
+cov.
+However, recalling the definition (57) of Vt, we obtain
+(t + 1 + a1
+L
+µ )2 E [LH(θt+1) − L∗] ≤ Vt+1 ≤ V0 + (t + 1)2a2
+1L
+µ2 σ2 + (t + 1)
+ t
+2 + a1
+L
+µ
+ 4a1κ
+µ G2
+cov.
+By rearranging terms, and using the fact that L
+µ ≥ 1, we then get
+E [LH(θt+1) − L∗] ≤ V0
+(t + 1 + a1 L
+µ )2 + t + 1
+(t + 1 + a1 L
+µ )2
+2a2
+1Lσ2
+µ2 +
+(t + 1)
+
+t
+2 + a1 L
+µ
+
+(t + 1 + a1 L
+µ )2
+4a1κ
+µ G2
+cov
+≤ V0
+(t + 1 + a1 L
+µ )2 + 1
+t + 1 + a1 L
+µ
+2a2
+1Lσ2
+µ2 + 4a1κ
+µ G2
+cov. (75)
+It remains to bound V0. By definition, we have
+V0 =
+
+a1
+L
+µ
+2 h
+LH(θ0) − L∗ + z1
+L ∥δ0∥2 + z2
+L ∆0
+i
+.
+By definition of mt = 1
+|H|
+P
+i∈H m(i)
+t and the initializations m(i)
+0 = 0 for all i ∈ H, we have ∆0 =
+λmax
+
+1
+|H|
+P
+i∈H(m(i)
+0 − m0)(m(i)
+0 − m0)⊤
+
+= 0. Therefore, we have
+V0 =
+
+a1
+L
+µ
+2 h
+LH(θ0) − L∗ + z1
+L ∥δ0∥2
+i
+.
+Moreover, by definition of δt in (52), we obtain that
+∥δ0∥2 = ∥m0 − ∇LH(θ0)∥2 = ∥∇LH(θ0)∥2 .
+Recall that LH is L-smooth. Thus, ∥∇LH(θ0)∥2 ≤ 2L(LH(θ0) − L∗) (see (Nesterov et al., 2018), Theorem 2.1.5).
+Therefore, substituting z1 = 1
+16, we have
+V0 ≤
+
+a1
+L
+µ
+2 
+LH(θ0) − L∗ + 2L
+16L (LH(θ0) − L∗)
+
+=≤
+
+a1
+L
+µ
+2 9
+8 (LH(θ0) − L∗) ≤ 2
+
+a1
+L
+µ
+2
+(LH(θ0) − L∗).
+38
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Plugging the above bound back in Equation (75), rearranging terms, and then recalling that a1 L
+µ ≥ 0, yields
+E [LH(θt+1) − L∗] ≤ 4a1
+µ κG2
+cov + 2a2
+1Lσ2
+µ2(t + 1 + a1 L
+µ ) + 2a1L2(LH(θ0) − L∗)
+µ2(t + 1 + a1 L
+µ )2
+≤ 4a1
+µ κG2
+cov + 2a2
+1Lσ2
+µ2(t + 1) + 2a1L2(LH(θ0) − L∗)
+µ2(t + 1)2 .
+Specializing the inequality above for t = T − 1 and denoting L0 := LH(θ0) − L∗ proves the theorem:
+E [LH(θT ) − L∗] ≤ 4a1
+µ κG2
+cov + 2a2
+1Lσ2
+µ2T + 2a2
+1L2L0
+µ2T 2 .
+Remark D.1. In the proof of the strongly convex case of Theorem 4.2 above, we do not need the function LH to be
+µ-strongly convex. In fact, it is sufficient for LH to satisfy the µ-PL inequality stated in (74). Accordingly, our results not
+only apply to smooth µ-strongly convex functions, but more generally to the class of smooth µ-PL functions, which may be
+non-convex (Karimi et al., 2016).
+D.2.2. N ON-CONVEX CASE
+Proof. Let Assumption 2.2 hold and assume that LH is L-smooth, and that F is a (f, κ)-robust averaging aggregation rule.
+Let t ∈ {0, . . . , T− 1}. We set the learning rate and momentum to constant as follows:
+γt = γ := min
+ 1
+24L ,
+√a4L0
+2σ√a3LT
+
+, βt = β := 1 − 24Lγ, (76)
+where a1 := 240. Note that we have
+γt = γ ≤ 1
+24L . (77)
+To obtain the convergence result we define the Lyapunov function to be
+Vt := E
+h
+LH(θt) − L∗ + z1
+L ∥δt∥2 + κ · z2
+L ∆t
+i
+, (78)
+where z1 = 1
+16, and z2 = 2 . Note that Vt corresponds to the sequence Wt defined in Equation (58), and analyzed in
+Appendix D.2.1 under the assumption that γt ≤ 1
+24L. Since the latter holds by Equation (77), we directly apply the bound
+obtained in Equation (73):
+Vt+1 − Vt ≤ −γt
+10 E
+h
+∥∇LH(θt)∥2
+i
+− z1γt E
+h
+∥δt∥2
+i
+− 6κz2γt E [∆t]
++ 1
+L (1 − βt)2σ2 + κ · 2
+L (1 − βt)G2
+cov.
+In turn, substituting γt = γ, βt = β and bounding the second and third terms on the RHS by zero, this implies that
+Vt+1 − Vt ≤ −γ
+10 E
+h
+∥∇LH(θt)∥2
+i
++ 1
+L (1 − β)2σ2 + κ · 2
+L (1 − β)G2
+cov.
+By rearranging terms and then averaging over t ∈ {0, . . . , T− 1}, we obtain
+1
+T
+T −1X
+t=0
+E
+h
+∥∇LH(θt)∥2
+i
+≤ 10
+γT
+T −1X
+t=0
+(Vt − Vt+1) + 10
+γL (1 − β)2σ2 + κ · 20
+γL (1 − β)G2
+cov.
+We now substitute β = 1 − 24γL. Denoting a3 = 10 × 242 = 5760, a2 = 20 × 24 = 480, we obtain
+1
+T
+T −1X
+t=0
+E
+h
+∥∇LH(θt)∥2
+i
+≤ 10
+γT
+T −1X
+t=0
+(Vt − Vt+1) + (10 × 242)
+γL (γL)2σ2 + κ · (20 × 24)
+γL (γL)G2
+cov
+= 10
+γT (V0 − VT ) + a3γLσ2 + a2κG2
+cov. (79)
+39
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+We now bound V0 − VT . First recall that VT ≥ 0 as a sum of non-negative terms (see (78)). Therefore, we have
+V0 − VT ≤ V0 = LH(θ0) − L∗ + z1
+L ∥δ0∥2 + z2
+L ∆0.
+By definition of mt = 1
+|H|
+P
+i∈H m(i)
+t and the initializations m(i)
+0 = 0 for all i ∈ H, we have ∆0 =
+λmax
+
+1
+|H|
+P
+i∈H(m(i)
+0 − m0)(m(i)
+0 − m0)⊤
+
+= 0. Therefore, we have
+V0 = LH(θ0) − L∗ + z1
+L ∥δ0∥2 .
+Moreover, by definition of δt in (52), we obtain that
+∥δ0∥2 = ∥m0 − ∇LH(θ0)∥2 = ∥∇LH(θ0)∥2 .
+Recall that LH is L-smooth. Thus, ∥∇LH(θ0)∥2 ≤ 2L(LH(θ0) − L∗) (see (Nesterov et al., 2018), Theorem 2.1.5).
+Therefore, substituting z1 = 1
+16, we have
+V0 − VT ≤ V0 ≤ LH(θ0) − L∗ + 2L
+16L (LH(θ0) − L∗) = 9
+8 (LH(θ0) − L∗).
+By plugging this bound back in (79), and denoting a4 := 24 × 10 × ( 9
+8 ) = 270 and L0 := LH(θ0) − L∗, we obtain
+1
+T
+T −1X
+t=0
+E
+h
+∥∇LH(θt)∥2
+i
+≤ 10 × ( 9
+8 )
+γT (LH(θ0) − L∗) + a3γLσ2 + a2κG2
+cov
+= a4L0
+24γT + a3γLσ2 + a2κG2
+cov. (80)
+Recall that by definition
+γ = min
+ 1
+24L ,
+√a4L0
+2σ√a3LT
+
+,
+and thus 1
+γ = max
+n
+24L, 2√a4L0
+σ√a3LT
+o
+≤ 24L + 2√a4L0
+σ√a3LT . Therefore, we have
+a4L0
+24γT ≤ a4L0
+24T
+
+24L + 2√a4L0
+σ
+p
+a3LT
+
+= a4LL0
+T +
+√a3a4LL0σ
+12
+√
+T
+.
+Upon using the above, and that γ ≤
+√a4L0
+2σ√a3LT , in (80), we obtain that
+1
+T
+T −1X
+t=0
+E
+h
+∥∇LH(θt)∥2
+i
+≤ a4LL0
+T +
+√a3a4LL0σ
+12
+√
+T
++
+√a3a4LL0σ
+2
+√
+T
++ a2κG2
+cov ≤ a2κG2
+cov +
+√a3a4LL0σ√
+T
++ a4LL0
+T .
+Finally, recall from Algorithm 1 that ˆθ is chosen randomly from the set of parameter vectors
+ 
+θ0, . . . , θT −1
+
+. Thus,
+E
+∇LH
+
+ˆθ
+
+2
+= 1
+T
+PT −1
+t=0 E
+h
+∥∇LH(θt)∥2
+i
+. Substituting this above proves the theorem.
+D.3. Proof of Corollary 5.1
+We now state the proof of Corollary 5.1 below.
+Corollary 5.1. Consider Algorithm 1 with aggregation F = SMEA, under the strongly convex setting of Theorem 4.2.
+Suppose that assumptions 2.1, 2.2, 2.3 hold, and that n ≥ (2 + η)f, for some absolute constant η >0. Let ε >0, δ∈ (0, 1)
+be such that ε ≤ log (1/δ). Then, there exists a constant k >0 such that, if σDP = k · 2C/b max {1, b
+√
+T log (1/δ)/εm}, then
+Algorithm 1 is (ε, δ)-DP and (f, ϱ)-robust where
+ϱ = O
+ d log (1/δ)
+ε2nm2 + f
+n · log (1/δ)
+ε2m2 + f
+n G2
+
+.
+40
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Proof. Assume that LH is L-smooth and µ-strongly convex. Consider Algorithm 1 with aggregation F = SMEA, learning
+rate γt = 10
+µ(t+a1 L
+µ ), and momentum coefficient βt = 1 − 24Lγt. By Theorem 4.1, the condition on σDP ensures that
+Algorithm 1 is (ε, δ)-DP. In the remaining, we prove that Algorithm 1 is (f, ϱ)-robust as stated in the corollary.
+First, note that, by Proposition 5.1, SMEA is (f, κ)-robust averaging with κ = 4f
+n−f (1 + f
+n−2f )2. In fact, as we assume
+n ≥ (2 + η)f where η >0 is an absolute constant, we have
+κ ≤ 4f
+n − f (1 + 1
+η )2 = O( f
+n − f ). (81)
+Therefore, thanks to Theorem 4.2, we have
+E [LH(θT ) − L∗] ≤ 4a1
+κG2
+cov
+µ + 2a2
+1Lσ2
+µ2T + 2a2
+1L2L0
+µ2T 2 , (82)
+where the constant a1 is defined as in (3), and
+σ2 := σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+, σ 2
+b := 2(1 − b
+m ) σ2
+b .
+We now analyze independently the terms of (82) that depend on T , i.e. the last two terms on the RHS of (82). Recall that,
+asymptotically in T , the condition on σDP implies
+σDP = k · 2C
+b max {1, b
+√
+T log (1/δ)/mε} = O
+ 
+C
+p
+T log (1/δ)
+mε
+!
+. (83)
+Term 2a2
+1Lσ2
+µ2T . Recalling the expression of σ2, and using (83) and (81) and the facts that σ2
+b is independent of T and
+f < n− f, we obtain
+σ2 = σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+= O
+ dσ2
+DP
+n − f + f
+n − f · σ2
+DP(1 + d
+n − f )
+
+= O
+ dσ2
+DP
+n − f + f
+n − f · σ2
+DP
+
+= O
+ C 2d Tlog (1/δ)
+m2(n − f )ε2 + f
+n − f · C 2T log (1/δ)
+m2ε2
+
+.
+As a result, we obtain
+2a2
+1Lσ2
+µ2T = O
+ C 2d log (1/δ)
+m2(n − f )ε2 + f
+n − f · C 2 log (1/δ)
+m2ε2
+
+. (84)
+Term 2a2
+1L2L0
+µ2T 2 . This term is independent of σDP and vanishes with T .
+Going back to (82), and ignoring terms vanishing in T , and using (81), we obtain
+E [LH(θT ) − L∗] = O
+ C 2d log (1/δ)
+m2(n − f )ε2 + f
+n − f
+C 2 log (1/δ)
+m2ε2 + f
+n − f G2
+cov
+
+.
+Finally, note that G2
+cov ≤ G2. Indeed, using the definition of G2
+cov and Assumption 2.1, together with Cauchy-Schwartz, we
+have
+G2
+cov = sup
+θ∈Rd
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θ) − ∇LH(θ)⟩2 ≤ sup
+θ∈Rd
+1
+|H|
+X
+i∈H
+∥∇Li(θ) − ∇LH(θ)∥2 ≤ G2.
+Using the fact above in the last inequality, together with the fact that n − f ≥ n
+2 (as n >2f), we conclude
+E [LH(θT ) − L∗] = O
+ C 2d log (1/δ)
+m2nε2 + f
+n
+C 2 log (1/δ)
+m2ε2 + f
+n G2
+
+.
+Ignoring the constant C above concludes the proof.
+41
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+D.4. Proof of Corollary D.1
+We now state the robustness and DP guarantees of SAFE -DSHB with SMEA in the non-convex case in Corollary D.1 below.
+Corollary D.1. Consider Algorithm 1 with aggregation F = SMEA , under the non-convex setting of Theorem 4.2.
+Suppose that assumptions 2.1, 2.2, 2.3 hold, that LH is L-smooth, and that n ≥ (2 + η)f, for some absolute constant
+η > 0. Let ε > 0, δ∈ (0, 1) be such that ε ≤ log (1/δ). Then, there exists a constant k > 0 such that, if σDP =
+k · 2C/b max {1, b
+√
+T log (1/δ)/εm}, then Algorithm 1 is (ε, δ)-DP and (f, ϱ)-robust, where
+ϱ = O
+ p
+d log (1/δ)
+ε√nm +
+r
+f
+n ·
+p
+log (1/δ)
+εm + f
+n G2
+!
+.
+Proof. Assume that LH is L-smooth. Consider Algorithm 1 with aggregation F = SMEA , learning rate γt = γ =
+min
+n
+1
+24L ,
+√a4L0
+2σ√a3LT
+o
+, and momentum coefficient βt = β = 1 − 24Lγ. By Theorem 4.1, the condition on σDP ensures
+that Algorithm 1 is (ε, δ)-DP. In the remaining, we prove that Algorithm 1 is (f, ϱ)-robust as stated in the corollary.
+First, note that, by Proposition 5.1, SMEA is (f, κ)-robust averaging with κ = 4f
+n−f (1 + f
+n−2f )2. In fact, as we assume
+n ≥ (2 + η)f where η >0 is an absolute constant, we have
+κ ≤ 4f
+n − f (1 + 1
+η )2 = O( f
+n − f ). (85)
+Therefore, thanks to Theorem 4.2, we have
+E
+h
+∥∇LH(ˆθ)∥2
+i
+≤ a2κG2
+cov +
+√a3a4LL0σ√
+T
++ a4LL0
+T , (86)
+where the constants a1, a2, a3, a4 are defined as in (3), and
+σ2 := σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+, σ 2
+b := 2(1 − b
+m ) σ2
+b .
+We now analyze independently the terms of (82) that depend on T , i.e. the last two terms on the RHS of (82). Recall that,
+asymptotically in T , the condition on σDP implies
+σDP = k · 2C
+b max {1, b
+√
+T log (1/δ)/mε} = O
+ 
+C
+p
+T log (1/δ)
+mε
+!
+. (87)
+Term
+√a3a4LL0σ√
+T . Recalling the expression of σ2, and using (83) and (81) and the facts that σ2
+b is independent of T and
+f < n− f, we obtain
+σ2 = σ2
+b + dσ2
+DP
+n − f + 4κ
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+= O
+ dσ2
+DP
+n − f + f
+n − f · σ2
+DP(1 + d
+n − f )
+
+= O
+ dσ2
+DP
+n − f + f
+n − f · σ2
+DP
+
+= O
+ C 2d Tlog (1/δ)
+m2(n − f )ε2 + f
+n − f · C 2T log (1/δ)
+m2ε2
+
+.
+Therefore, using √x + y ≤ √x + √y, we obtain
+σ = O
+ 
+C
+p
+d Tlog (1/δ)
+m√n − f ε +
+s
+f
+n − f · C
+p
+T log (1/δ)
+mε
+!
+.
+As a result, we obtain √a3a4LL0σ√
+T
+= O
+ 
+C
+p
+d log (1/δ)
+m√n − f ε +
+s
+f
+n − f · C
+p
+log (1/δ)
+mε
+!
+. (88)
+42
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Term a4LL0
+T . This term is independent of σDP and vanishes with T .
+Going back to (86), ignoring terms vanishing in T , and using (85), we obtain
+E
+h
+∥∇LH(ˆθ)∥2
+i
+= O
+ 
+C
+p
+d log (1/δ)
+m√n − f ε +
+s
+f
+n − f · C
+p
+log (1/δ)
+mε + f
+n − f G2
+cov
+!
+.
+Finally, note that G2
+cov ≤ G2. Indeed, using the definition of G2
+cov and Assumption 2.1, together with Cauchy-Schwartz, we
+have
+G2
+cov = sup
+θ∈Rd
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θ) − ∇LH(θ)⟩2 ≤ sup
+θ∈Rd
+1
+|H|
+X
+i∈H
+∥∇Li(θ) − ∇LH(θ)∥2 ≤ G2.
+Using the fact above in the last inequality, together with the fact that n − f ≥ n
+2 (as n >2f), we conclude
+E
+h
+∥∇LH(ˆθ)∥2
+i
+= O
+ 
+C
+p
+d log (1/δ)
+m√nε +
+r
+f
+n · C
+p
+log (1/δ)
+mε + f
+n G2
+!
+.
+Ignoring the constant C above concludes the proof.
+Discussion. We conjecture that the non-convex upper bound can be improved as observed recently in the centralized DP
+setting using other variance reduction techniques (Arora et al., 2022). Nevertheless, both in the centralized and distributed
+settings, it remains an open question to derive tight lower bounds for non-convex problems.
+43
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+D.5. Proof of Supporting Lemmas
+Before proving Lemmas D.1 to D.3 in Sections D.5.2 to D.5.4 respectively, we first show some additional technical lemmas
+in Section D.5.1 below.
+D.5.1. T ECHNICAL LEMMAS
+Lemma D.4. Let M ∈ Rd×d be a random real symmetric matrix and g : R → R an increasing function. It holds that
+E
+"
+sup
+∥v∥≤1
+g(⟨v, M v⟩)
+#
+≤ 9d · sup
+∥v∥≤1
+E [g(2 ⟨v, M v⟩)] .
+Proof. Let M ∈ Rd×d be a random real symmetric matrix and g : R → R a increasing function.
+The proof follows the construction of (Section 5.2, (Vershynin, 2010)). Recall from standard covering net results (Vershynin,
+2010) that we can construct N1/4 a finite 1/4-net of the unit ball, i.e., for any vector v in the unit ball, there exists
+uv ∈ N1/4 such that ∥uv − v∥ ≤1/4. Moreover, we have the bound
+N1/4
+ ≤ (1 + 2/(1/4))d = 9 d. Denote by
+∥M ∥ := sup∥v∥≤1 ∥M v∥ the operator norm of M. By recalling that M is symmetric, we obtain for any v in the unit ball
+|⟨v, M v⟩ − ⟨uv, M uv⟩| = |⟨v + uv, M(v − uv)⟩| ≤ ∥v + uv∥ ∥M (v − uv)∥ ≤(∥v∥ + ∥uv∥) ∥M (v − uv)∥
+≤ 2 ∥M (v − uv)∥ ≤2 ∥M ∥ ∥v − uv∥ ≤2 ∥M ∥ /4 = ∥M ∥ /2.
+Therefore, we have ⟨v, M v⟩ − ⟨uv, M uv⟩ ≤ ∥M ∥ /2, and ⟨v, M v⟩ − ∥M ∥ /2 ≤ ⟨uv, M uv⟩ ≤supu∈N1/4 ⟨u, M u⟩.
+Recall that since M is symmetric, its operator norm coincides with its maximum eigenvalue: ∥M ∥ = sup∥v∥≤1 ⟨v, M v⟩.
+We therefore deduce that
+sup
+∥v∥≤1
+⟨v, M v⟩ ≤2 · sup
+v∈N1/4
+⟨v, M v⟩ .
+Upon composing with g, which is increasing, we get
+sup
+∥v∥≤1
+g(⟨v, M v⟩) = g
+ 
+sup
+∥v∥≤1
+⟨v, M v⟩
+!
+≤ g
+ 
+2 · sup
+v∈N1/4
+⟨v, M v⟩
+!
+= sup
+v∈N1/4
+g(2 ⟨v, M v⟩).
+Upon taking expectations and applying union bound, we finally conclude
+E
+"
+sup
+∥v∥≤1
+g(⟨v, M v⟩)
+#
+≤ E
+"
+sup
+v∈N1/4
+g(2 ⟨v, M v⟩)
+#
+≤
+N1/4
+ · sup
+v∈N1/4
+E [g(2 ⟨v, M v⟩)] ≤ 9d · sup
+∥v∥≤1
+E [g(2 ⟨v, M v⟩)] .
+Lemma D.5. Suppose assumptions 2.2 and 2.3 hold. For any t ∈ {0, . . . , T− 1} and i ∈ H, we have
+E
+˜g(i)
+t − ∇Li(θt)
+
+2
+≤ 2
+
+1 − b
+m
+ σ2
+b + d · σ2
+DP.
+Proof. Suppose assumptions 2.2 and 2.3 hold. Let i ∈ Hand t ∈ {0, . . . , T− 1}.
+First recall from (48) that, since ˜g(i)
+t = g(i)
+t + ξ(i)
+t , ξ(i)
+t
+i.i.d.
+∼ N(0, σ2
+DPId), we have
+Eξ(i)
+t
+˜g(i)
+t − g(i)
+t
+
+2
+= E
+ξ(i)
+t
+
+2
+= d · σ2
+DP.
+Next, we have
+˜g(i)
+t − ∇Li(θt)
+
+2
+=
+˜g(i)
+t − g(i)
+t + g(i)
+t − ∇Li(θt)
+
+2
+=
+˜g(i)
+t − g(i)
+t
+
+2
++
+g(i)
+t − ∇Li(θt)
+
+2
++ 2
+D
+˜g(i)
+t − g(i)
+t , g(i)
+t − ∇Li(θt)
+E
+.
+44
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Now taking expectation on the randomness of ξ(i)
+t (independent of all other random variables), and since E
+h
+ξ(i)
+t
+i
+= 0, we
+get
+Eξ(i)
+t
+˜g(i)
+t − ∇Li(θt)
+
+2
+= Eξ(i)
+t
+˜g(i)
+t − g(i)
+t
+
+2
++
+g(i)
+t − ∇Li(θt)
+
+2
++ 2
+*
+Eξ(i)
+t
+h
+˜g(i)
+t − g(i)
+t
+i
+| {z }
+=E
+h
+ξ(i)
+t
+i
+=0
+, g(i)
+t − ∇Li(θt)
++
+= Eξ(i)
+t
+˜g(i)
+t − g(i)
+t
+
+2
++
+g(i)
+t − ∇Li(θt)
+
+2
+.
+Upon taking total expectation, we obtain
+E
+˜g(i)
+t − ∇Li(θt)
+
+2
+= E
+˜g(i)
+t − g(i)
+t
+
+2
++ E
+g(i)
+t − ∇Li(θt)
+
+2
+= E
+g(i)
+t − ∇Li(θt)
+
+2
++ d · σ2
+DP. (89)
+First observe that when m = 1, as b ∈ [m], we must have b = m. Thus, the gradient is deterministic, i.e., g(i)
+t = ∇Li(θt).
+Thus, the first term in the equation above is zero, and the claimed bound holds.
+Else, when m ≥ 2, recall that from Assumption 2.2, we have Ex∼U (Di)
+h
+∥∇θℓ(θt; x) − ∇Li(θt)∥2
+i
+≤ σ2. From (Rice,
+2006), the variance reduction due to subsampling without replacement gives
+E
+g(i)
+t − ∇Li(θt)
+
+2
+≤
+
+1 − b − 1
+m − 1
+ σ2
+b .
+Plugging this bound back in Equation (89) yields
+E
+˜g(i)
+t − ∇Li(θt)
+
+2
+≤
+
+1 − b − 1
+m − 1
+ σ2
+b + d · σ2
+DP.
+By observing, as m ≥ 2, that 1 − b−1
+m−1 = m−b
+m−1 = m
+m−1 · m−b
+m = (1 + 1
+m−1 )(1 − b
+m ) ≤ 2(1 − b
+m ), we obtain the final result:
+E
+˜g(i)
+t − ∇Li(θt)
+
+2
+≤ 2
+
+1 − b
+m
+ σ2
+b + d · σ2
+DP.
+Lemma D.6. Let σDP ≥ 0 and d, n≥ 1. Consider ξ(1), . . . , ξ(n) to be i.i.d. random variables drawn from the Gaussian
+distribution N (0, σ2
+DPId). We have
+E
+"
+sup
+∥v∥≤1
+1
+n
+nX
+i=1
+D
+v, ξ(i)
+E2
+#
+≤ 36σ2
+DP
+
+1 + d
+n
+
+.
+Proof. Let σDP ≥ 0 and d, n≥ 1. Consider ξ(1), . . . , ξ(n) to be i.i.d. random variables drawn from the Gaussian distribution
+N (0, σ2
+DPId).
+If σDP = 0, then ξ(i) = 0 almost surely for every i ∈ [n], and the remainder of the proof holds with σDP = 0. Else, we
+assume σDP > 0 in the remaining.
+Thus, the law of the random variable ξ(i)/σDP is N (0, Id) for every i ∈ [n]. Thus, for every vector of the unit ball v, the
+random variable
+
+v, ξ(i)/σDP
+
+is sub-Gaussian with variance proxy equal to 1 (see (Chapter 1, (Rigollet & H¨utter, 2015))).
+Therefore, for every i ∈ [n] and every vector v of the unit ball, applying (Theorem 2.1.1, (Pauwels, 2020)), we have
+E
+
+exp
+D
+v, ξ(i)/σDP
+E2
+/8
+
+≤ 2.
+45
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+As a result, by the independence of ξ(i)’s, we obtain
+sup
+∥v∥≤1
+E
+"
+exp
+ 
+1
+8σ2
+DP
+nX
+i=1
+D
+v, ξ(i)
+E2
+!#
+= sup
+∥v∥≤1
+nY
+i=1
+E
+
+exp
+D
+v, ξ(i)/σDP
+E2
+/8
+
+≤ 2n.
+Now, observe that we can write Pn
+i=1
+
+v, ξ(i)2
+as the quadratic form ⟨v, M v⟩, where M := Pn
+i=1 ξ(i) · ξ(i)⊤
+is a random
+real symmetric matrix. Thus, applying Lemma D.4 with the increasing function g = exp ( 1
+16σ2
+DP
+× ·), we have
+E
+"
+sup
+∥v∥≤1
+exp
+ 
+1
+16σ2
+DP
+nX
+i=1
+D
+v, ξ(i)
+E2
+!#
+= E
+"
+sup
+∥v∥≤1
+g(⟨v, M v⟩)
+#
+≤ 9d · sup
+∥v∥≤1
+E [g(2 ⟨v, M v⟩)]
+= 9d · sup
+∥v∥≤1
+E
+"
+exp
+ 
+1
+8σ2
+DP
+nX
+i=1
+D
+v, ξ(i)
+E2
+!#
+≤ 9d · 2n.
+We can now use this inequality to bound the term of interest. We apply Jensen’s inequality thanks to exp being convex, and
+we also interchange exp and sup thanks to the former being increasing:
+exp
+ 
+1
+16σ2
+DP
+E
+"
+sup
+∥v∥≤1
+nX
+i=1
+D
+v, ξ(i)
+E2
+#!
+≤ E
+"
+exp
+ 
+1
+16σ2
+DP
+sup
+∥v∥≤1
+nX
+i=1
+D
+v, ξ(i)
+E2
+!#
+= E
+"
+sup
+∥v∥≤1
+exp
+ 
+1
+16σ2
+DP
+nX
+i=1
+D
+v, ξ(i)
+E2
+!#
+≤ 9d · 2n.
+Upon applying ln and multiplying by 16σ2
+DP/n, we obtain
+E
+"
+sup
+∥v∥≤1
+1
+n
+nX
+i=1
+D
+v, ξ(i)
+E2
+#
+≤ 16 σ2
+DP
+n (d ln 9 +n ln 2)α2 ≤ 36 σ2
+DP
+n (d + n) = 36σ2
+DP
+
+1 + d
+n
+
+.
+The above concludes the proof
+D.5.2. P ROOF OF LEMMA D.1
+Lemma D.1. Suppose that assumptions 2.2 and 2.3 hold. Consider Algorithm 1. For every t ∈ {0, . . . , T− 1}, we have
+E [∆t+1] ≤ βt E [∆t] + 2(1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ (1 − βt)G2
+cov,
+where mt := 1
+|H|
+P
+i∈H m(i)
+t , σ2
+b := 2(1 − b
+m ) σ2
+b , and G2
+cov := supθ∈Rd sup∥v∥≤1
+1
+|H|
+P
+i∈H ⟨v, ∇Li(θ) − ∇LH(θ)⟩2.
+Proof. Let t ∈ {0, . . . , T− 1}. Suppose that Assumption 2.2 holds. Recall that the alternate definition of maximum
+eigenvalue implies, following the definition of ∆t in Equation (51), that
+∆t = λmax
+ 
+1
+|H|
+X
+i∈H
+(m(i)
+t − mt)(m(i)
+t − mt)⊤
+!
+= sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+.
+We will use the latter expression above for ∆t throughout this lemma.
+For every i ∈ H, by definition of m(i)
+t , given in Equation (47), we have
+m(i)
+t+1 = βtm(i)
+t + (1 − βt)˜g(i)
+t+1.
+We also denote mt := 1
+|H|
+P
+i∈H m(i)
+t and egt+1 := 1
+|H|
+P
+i∈H ˜g(i)
+t+1. Therefore, we have mt+1 = βtmt + (1 − βt)egt+1. As
+a result, we can write for every i ∈ H
+m(i)
+t+1 − mt+1 = βt(m(i)
+t − mt) + (1 − βt)(˜g(i)
+t+1 − egt+1)
+= βt(m(i)
+t − mt) + (1 − βt)(∇Li(θt+1) − ∇LH(θt+1))
++ (1 − βt)(˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)).
+46
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+By projecting the above expression on an arbitrary vector v and then taking squares, we obtain
+D
+v, m(i)
+t+1 − mt+1
+E2
+=
+h
+βt
+D
+v, m(i)
+t − mt
+E
++ (1 − βt) ⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
++ (1 − βt)
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E i2
+= β2
+t
+D
+v, m(i)
+t − mt
+E2
++ (1 − βt)2 ⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
++ (1 − βt)2
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E2
++ 2βt(1 − βt)
+D
+v, m(i)
+t − mt
+E
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
++ 2βt(1 − βt)
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E
++ 2βt(1 − βt) ⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E
+.
+Upon averaging over i ∈ H, taking the supremum over the unit ball, and then total expectations, we get
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t+1 − mt+1
+E2
+#
+= β2
+t E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+#
++ (1 − βt)2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+#
++ (1 − βt)2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E2
+#
++ 2βt(1 − βt) E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
+#
++ 2βt(1 − βt) E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E#
++ 2βt(1 − βt) E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E#
+.
+(90)
+We now show that the last two terms on the RHS of Equation (90) are non-positive. We show it for the first one, as the
+second one can be shown to be non-positive in the same way.
+First, note that we can write the inner expression as a quadratic form. Precisely, we have for any vector v and any i ∈ Hthat
+2
+X
+i∈H
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E
+= ⟨v, M v⟩ ,
+where we have introduced the d × d matrix M := N + N ⊤, such that N := P
+i∈H(m(i)
+t − mt)(˜g(i)
+t+1 − ∇Li(θt+1) −
+egt+1 + ∇LH(θt+1))⊤. By observing that M is symmetric, we can apply Lemma D.4 with g being the identity mapping:
+E
+"
+sup
+∥v∥≤1
+2
+X
+i∈H
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E#
+= E
+"
+sup
+∥v∥≤1
+⟨v, M v⟩
+#
+≤ 9d · sup
+∥v∥≤1
+E [2 ⟨v, M v⟩] . (91)
+However, the last term is zero by the total law of expectation. Indeed, recall that stochastic gradients are unbiased
+47
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+(Assumption 2.2) and that θt+1 and m(i)
+t are deterministic when given history Pt+1. This gives
+E [⟨v, M v⟩] = E
+"
+2
+X
+i∈H
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E#
+= E
+"
+Et+1
+"
+2
+X
+i∈H
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E##
+= E
+
+2
+X
+i∈H
+D
+v, m(i)
+t − mt
+E *
+v, Et+1
+h
+˜g(i)
+t+1 − ∇Li(θt+1)
+i
+| {z }
+=0
+− Et+1
+h
+egt+1 − ∇LH(θt+1)
+i
+| {z }
+=0
++
+ = 0.
+Moreover, going back to Equation (91), we obtain
+E
+"
+sup
+∥v∥≤1
+2
+X
+i∈H
+D
+v, m(i)
+t − mt
+E D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E#
+≤ 9d · sup
+∥v∥≤1
+E [2 ⟨v, M v⟩] = 0.
+As mentioned previously, we can prove in the same way that
+E
+"
+sup
+∥v∥≤1
+2
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E#
+≤ 0.
+Plugging the two previous bounds back in Equation (90), we have thus proved that
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t+1 − mt+1
+E2
+#
+= β2
+t E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+#
++ (1 − βt)2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+#
++ (1 − βt)2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E2
+#
++ 2βt(1 − βt) E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
+#
+. (92)
+We now bound the two last terms on the RHS of Equation (92).
+First, by using the fact that 2ab ≤ a2 + b2, we have for any vector v that
+2
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩ ≤ 1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
++ ⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+
+= 1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
++ 1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2 . (93)
+Taking the supremum over the unit ball and then total expectations yields
+2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩
+#
+≤ E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+#
++ E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+#
+. (94)
+48
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Second, recall that ˜g(i)
+t+1 = g(i)
+t+1 + ξ(i)
+t+1, where ξ(i)
+t+1 ∼ N(0, σ2
+DPId). Denote ξt+1 := 1
+|H|
+P
+i∈H ξ(i)
+t+1. Therefore, by
+applying Jensen’s inequality, we have
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E2
+#
+= E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, g(i)
+t+1 − ∇Li(θt+1) − gt+1 + ∇LH(θt+1) + ξ(i)
+t+1 − ξt+1
+E2
+#
+≤ 2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, g(i)
+t+1 − ∇Li(θt+1) − gt+1 + ∇LH(θt+1)
+E2
++
+D
+v, ξ(i)
+t+1 − ξt+1
+E2#
+Now, recall the following bias-variance decomposition: for anyx1, . . . , xn ∈ R we have 1
+n
+Pn
+i=1(xi − x)2 = 1
+n
+Pn
+i=1 x2
+i −
+x2 ≤ Pn
+i=1 x2
+i , where we denoted x := 1
+n
+Pn
+i=1 xi. Applying this fact above yields
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E2
+#
+≤ 2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, g(i)
+t+1 − ∇Li(θt+1)
+E2
++
+D
+v, ξ(i)
+t+1
+E2#
+≤ 2 E
+"
+1
+|H|
+X
+i∈H
+g(i)
+t+1 − ∇Li(θt+1)
+
+2
+#
++ 2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ξ(i)
+t+1
+E2
+#
+, (95)
+where the last inequality is due to the Cauchy-Schwartz inequality. Recall that, by Assumption 2.2 and Lemma D.5 applied
+with zero privacy noise, we have for everyi ∈ Hthat E
+g(i)
+t+1 − ∇Li(θt+1)
+
+2
+≤ 2(1 − b
+m ) σ2
+b =: σ2
+b . Therefore, upon
+averaging over i ∈ H, we have
+E
+"
+1
+|H|
+X
+i∈H
+g(i)
+t+1 − ∇Li(θt+1)
+
+2
+#
+≤ σ2
+b . (96)
+We now bound the remaining (last) term on the RHS of Equation (95). By applying Lemma D.6 to the random variables
+(ξ(i)
+t+1)i∈H which are drawn i.i.d. from N (0, σ2
+DPId), we obtain
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ξ(i)
+t+1
+E2
+#
+≤ 36σ2
+DP
+
+1 + d
+n − f
+
+. (97)
+Plugging the bounds obtained in Equations (96) and (97) back in Equation (95), we get
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, ˜g(i)
+t+1 − ∇Li(θt+1) − egt+1 + ∇LH(θt+1)
+E2
+#
+≤ 2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+. (98)
+We can now use the above bound of Equation (98) and that of Equation (94) to bound the RHS of Equation (92), which
+yields
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t+1 − mt+1
+E2
+#
+≤ β2
+t E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+#
++ (1 − βt)2 E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+#
++ 2(1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ βt(1 − βt) E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
++ 1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+#
+.
+49
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+By rearranging terms, and noticing that β2
+t + βt(1 − βt) = βt and (1 − βt)2 + βt(1 − βt) = 1 − βt, we obtain
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t+1 − mt+1
+E2
+#
+≤ βt E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+#
++ (1 − βt) E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+⟨v, ∇Li(θt+1) − ∇LH(θt+1)⟩2
+#
++ 2(1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
+.
+Denote G2
+cov := supθ∈Rd sup∥v∥≤1
+1
+|H|
+P
+i∈H ⟨v, ∇Li(θ) − ∇LH(θ)⟩2. Then, the above bound implies
+E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t+1 − mt+1
+E2
+#
+≤ βt E
+"
+sup
+∥v∥≤1
+1
+|H|
+X
+i∈H
+D
+v, m(i)
+t − mt
+E2
+#
++ 2(1 − βt)2
+
+σ2
+b + 36σ2
+DP(1 + d
+n − f )
+
++ (1 − βt)G2
+cov.
+The above inequality concludes the proof.
+D.5.3. P ROOF OF LEMMA D.2
+Lemma D.2. Suppose that assumptions 2.2 and 2.3 hold and that LH is L-smooth. Consider Algorithm 1. For all
+t ∈ {0, . . . , T− 1}, we have
+E
+h
+∥δt+1∥2
+i
+≤ β2
+t (1 + γtL)(1 + 4γtL) E
+h
+∥δt∥2
+i
++ 4γtL(1 + γtL)β2
+t E
+h
+∥∇LH(θt)∥2
+i
++ (1 − βt)2 σ2
+DP
+(n − f ) + 2γtL(1 + γtL)β2
+t E
+h
+∥ϵt∥2
+i
+,
+where σ2
+DP := 2
+ 
+1 − b
+m
+ σ2
+b + d · σ2
+DP.
+Proof. Let t ∈ {0, . . . , T− 1}. Suppose that assumptions 2.2 and 2.3 hold and that LH is L-smooth.
+Recall from (52) that
+δt+1 := mt+1 − ∇LH
+ 
+θt+1
+
+.
+Denote egt := 1
+|H|
+P
+i∈H ˜g(i)
+t . Substituting from (47) and recalling that mt = 1
+|H|
+P
+i∈H m(i)
+t , we obtain
+δt+1 = βt mt + (1 − βt) egt+1 − ∇LH
+ 
+θt+1
+
+.
+Upon adding and subtracting βt∇LH(θt) and βt∇LH(θt+1) on the R.H.S. above we obtain that
+δt+1 = βt mt − βt∇LH(θt) + (1 − βt) egt+1 − ∇LH
+ 
+θt+1
+
++ βt∇LH(θt+1) + βt∇LH(θt) − βt∇LH(θt+1)
+= βt (mt − ∇LH(θt)) + (1 − βt) egt+1 − (1 − βt)∇LH
+ 
+θt+1
+
++ βt
+ 
+∇LH(θt) − ∇LH(θt+1)
+
+.
+As mt − ∇LH(θt) = δt (by (52)), from above we obtain that
+δt+1 = βtδt + (1 − βt)
+
+egt+1 − ∇LH
+ 
+θt+1
+
++ βt
+ 
+∇LH(θt) − ∇LH(θt+1)
+
+.
+Therefore,
+∥δt+1∥2 =β2
+t ∥δt∥2 + (1 − βt)2
+egt+1 − ∇LH
+ 
+θt+1
+
+2
++ β2
+t
+∇LH(θt) − ∇LH(θt+1)
+2
++ 2βt(1 − βt)
+D
+δt, egt+1 − ∇LH
+ 
+θt+1
+E
++ 2β2
+t
+
+δt, ∇LH(θt) − ∇LH(θt+1)
+
++ 2βt(1 − βt)
+D
+egt+1 − ∇LH
+ 
+θt+1
+
+, ∇LH(θt) − ∇LH(θt+1)
+E
+.
+50
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+By taking conditional expectation Et+1 [·] on both sides, and recalling that δt, θt+1 and θt are deterministic values when the
+history Pt+1 is given, we obtain that
+Et+1
+h
+∥δt+1∥2
+i
+=β2
+t ∥δt∥2 + (1 − βt)2Et+1
+egt+1 − ∇LH
+ 
+θt+1
+
+2
++ β2
+t
+∇LH(θt) − ∇LH(θt+1)
+2
++
+2βt(1 − βt)
+D
+δt, Et+1
+h
+egt+1
+i
+− ∇LH
+ 
+θt+1
+E
++ 2β2
+t
+
+δt, ∇LH(θt) − ∇LH(θt+1)
+
++ 2βt(1 − βt)
+D
+Et+1
+h
+egt+1
+i
+− ∇LH
+ 
+θt+1
+
+, ∇LH(θt) − ∇LH(θt+1)
+E
+.
+Recall that egt+1 := 1
+(n−f )
+P
+j∈H ˜g(i)
+t+1. Thus, as we ignore clipping by Assumption 2.3, we have Et+1
+h
+egt+1
+i
+=
+∇LH(θt+1). Using this above we obtain that
+Et+1
+h
+∥δt+1∥2
+i
+=β2
+t ∥δt∥2 + (1 − βt)2Et+1
+egt+1 − ∇LH
+ 
+θt+1
+
+2
++ β2
+t
+∇LH(θt) − ∇LH(θt+1)
+2
++ 2β2
+t
+
+δt, ∇LH(θt) − ∇LH(θt+1)
+
+.
+Now, denote σ2
+DP := 2
+ 
+1 − b
+m
+ σ2
+b + d · σ2
+DP. By assumptions 2.2 and 2.3, we can invoke Lemma D.5 which implies,
+together with the fact that g(j)
+t+1’s for j ∈ Hare independent, that Et+1
+egt+1 − ∇LH
+ 
+θt+1
+
+2
+≤ σ2
+DP
+n−f . Thus,
+Et+1
+h
+∥δt+1∥2
+i
+≤ β2
+t ∥δt∥2 + (1 − βt)2 σ2
+DP
+(n − f ) + β2
+t
+∇LH(θt) − ∇LH(θt+1)
+2
++ 2β2
+t
+
+δt, ∇LH(θt) − ∇LH(θt+1)
+
+.
+By the Cauchy-Schwartz inequality,
+
+δt, ∇LH(θt) − ∇LH(θt+1)
+
+≤ ∥δt∥
+∇LH(θt) − ∇LH(θt+1)
+. Since LH
+is L-smooth, we have
+∇LH(θt) − ∇LH(θt+1)
+ ≤ L
+θt+1 − θt
+. Recall from (50) that θt+1 = θt − γtRt.
+Thus,
+∇LH(θt) − ∇LH(θt+1)
+ ≤ γtL ∥Rt∥. Using this above we obtain that
+Et+1
+h
+∥δt+1∥2
+i
+≤ β2
+t ∥δt∥2 + (1 − βt)2 σ2
+DP
+(n − f ) + γ2
+t β2
+t L2 ∥Rt∥2 + 2γtβ2
+t L ∥δt∥ ∥Rt∥ .
+As 2ab ≤ a2 + b2, from above we obtain that
+Et+1
+h
+∥δt+1∥2
+i
+≤ β2
+t ∥δt∥2 + (1 − βt)2 σ2
+DP
+(n − f ) + γ2
+t β2
+t L2 ∥Rt∥2 + γtLβ2
+t
+
+∥δt∥2 + ∥Rt∥2
+
+= (1 + γtL)β2
+t ∥δt∥2 + (1 − βt)2 σ2
+DP
+(n − f ) + γtL(1 + γtL)β2
+t ∥Rt∥2 . (99)
+By definition of ϵt in (53), we have Rt = ϵt + mt. Thus, owing to the triangle inequality and the fact that 2ab ≤ a2 + b2,
+we have ∥Rt∥2 ≤ 2 ∥ϵt∥2 + 2 ∥mt∥2. Similarly, by definition of δt in (52), we have ∥mt∥2 ≤ 2 ∥δt∥2 + 2 ∥∇LH(θt)∥2.
+Thus, ∥Rt∥2 ≤ 2 ∥ϵt∥2 + 4 ∥δt∥2 + 4 ∥∇LH(θt)∥2. Using this in (99) we obtain that
+Et+1
+h
+∥δt+1∥2
+i
+≤ (1 + γtL)β2
+t ∥δt∥2 + (1 − βt)2 σ2
+DP
+(n − f )
++ 2γtL(1 + γtL)β2
+t
+
+∥ϵt∥2 + 2 ∥δt∥2 + 2 ∥∇LH(θt)∥2
+
+.
+By rearranging the terms on the R.H.S., we get
+Et+1
+h
+∥δt+1∥2
+i
+≤β2
+t (1 + γtL) (1 + 4γtL) ∥δt∥2 + 4γtL(1 + γtL)β2
+t ∥∇LH(θt)∥2 + (1 − βt)2 σ2
+DP
+(n − f )
++ 2γtL(1 + γtL)β2
+t ∥ϵt∥2 .
+The proof concludes upon taking total expectation on both sides.
+51
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+D.5.4. P ROOF OF LEMMA D.3
+Lemma D.3. Assume that LH is L-smooth. Consider Algorithm 1. For any t ∈ [T ], we have
+E
+
+LH(θt+1) − LH(θt)
+
+≤ −γt
+2 (1 − 4γtL) E
+h
+∥∇LH(θt)∥2
+i
++ γt (1 + 2γtL) E
+h
+∥δt∥2
+i
++ γt (1 + γtL) E
+h
+∥ϵt∥2
+i
+.
+Proof. Let t ∈ {0, . . . , T− 1}. Assuming LH is L-smooth, we have (see (Bottou et al., 2018))
+LH(θt+1) − LH(θt) ≤
+
+θt+1 − θt, ∇LH(θt)
+
++ L
+2
+θt+1 − θt
+2
+.
+Substituting from (54), i.e., θt+1 = θt − γt mt − γtϵt, we obtain that
+LH(θt+1) − LH(θt) ≤ −γt ⟨mt, ∇LH(θt)⟩ −γt ⟨ϵt, ∇LH(θt)⟩ + γ2
+t
+L
+2 ∥ mt + ϵt∥2
+= −γt ⟨mt − ∇LH(θt) + ∇LH(θt), ∇LH(θt)⟩ −γt ⟨ϵt, ∇LH(θt)⟩ + γ2
+t
+L
+2 ∥ mt + ϵt∥2 .
+By Definition (52), mt − ∇LH(θt) = δt. Thus, from above we obtain
+LH(θt+1) − LH(θt) ≤ −γt ∥∇LH(θt)∥2 − γt ⟨δt, ∇LH(θt)⟩ −γt ⟨ϵt, ∇LH(θt)⟩ + 1
+2 γ2
+t L ∥ mt + ϵt∥2 . (100)
+Now, we consider the last three terms on the R.H.S. separately. Using Cauchy-Schwartz inequality, and the fact that
+2ab ≤ 1
+c a2 + cb2 for any c >0, we obtain that (by substituting c = 2)
+2 |⟨δt, ∇LH(θt)⟩| ≤2 ∥δt∥ ∥∇LH(θt)∥ ≤2
+1 ∥δt∥2 + 1
+2 ∥∇LH(θt)∥2 . (101)
+Similarly,
+2 |⟨ϵt, ∇LH(θt)⟩| ≤2 ∥ϵt∥ ∥∇LH(θt)∥ ≤2
+1 ∥ϵt∥2 + 1
+2 ∥∇LH(θt)∥2 . (102)
+Finally, using triangle inequality and the fact that 2ab ≤ a2 + b2 we have
+∥ mt + ϵt∥2 ≤ 2 ∥mt∥2 + 2 ∥ϵt∥2 = 2
+mt − ∇LH(θt+1) + ∇LH(θt)
+2
++ 2 ∥ϵt∥2
+≤ 4 ∥δt∥2 + 4 ∥∇LH(θt)∥2 + 2 ∥ϵt∥2 . [since mt − ∇LH(θt) = δt] (103)
+Substituting from (101), (102) and (103) in (100) we obtain that
+LH(θt+1) − LH(θt) ≤ −γt ∥∇LH(θt)∥2 + 1
+2 γt
+
+2 ∥δt∥2 + 1
+2 ∥∇LH(θt)∥2
+
++ 1
+2 γt
+
+2 ∥ϵt∥2 + 1
+2 ∥∇LH(θt)∥2
+
++ 1
+2 γ2
+t L
+
+4 ∥δt∥2 + 4 ∥∇LH(θt)∥2 + 2 ∥ϵt∥2
+
+.
+Upon rearranging the terms in the R.H.S., we obtain that
+LH(θt+1) − LH(θt) ≤ −γt
+2 (1 − 4γtL) ∥∇LH(θt)∥2 + γt (1 + 2γtL) ∥δt∥2 + γt (1 + γtL) ∥ϵt∥2 .
+This concludes the proof.
+52
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+E. Experimental Evaluation
+In Section E.1, we present our experimental setup. In Section E.2, we report our empirical results.
+E.1. Experimental Setup
+In our experiments, we test the performance of SAFE -DSHB using SMEA and Filter (Diakonikolas et al., 2017; Data &
+Diggavi, 2021) in the server-based architecture and in three privacy regimes.
+Dataset, model architecture, and hyperparameters. We train a logistic regression model of d = 69 parameters on
+the academic Phishing5 dataset. We employ the binary cross entropy (bce) loss as well as L2-regularization of parameter
+λ = 10−4, making the underlying learning problem strongly convex. We train the model using a fixed learning rate γ = 1
+over a total of T = 400 learning steps. We set the clipping threshold C = 1 and the batch size b = 25. We run all algorithms,
+except DSGD, with momentum β = 0.99.
+Distributed setup, and privacy accounting. We consider a server-based architecture composed of n = 7 workers, among
+which f = 3 are adversarial. The honest workers inject a privacy noise σDP = 2C
+b × σNM to their gradients, where σNM is
+referred to as the noise multiplier. We consider three privacy regimes in our experiments; namelylow privacy whereσNM = 1,
+moderate privacy where σNM = 2, and high privacy where σNM = 3. In order to estimate the privacy budgets achieved at
+the end of the learning, we use Opacus (Yousefpour et al., 2021), a DP library for deep learning in PyTorch (Paszke et al.,
+2019). Using Opacus, the aggregate privacy budgets after T = 400 steps of learning are (ϵ, δ) = (1.14, 10−4) in the low
+privacy regime, (ϵ, δ) = (0.32, 10−4) in the moderate privacy regime, and (ϵ, δ) = (0.19, 10−4) in the high privacy regime.
+Evaluation details and reproducibility. As a benchmark, we compare the performance of SAFE -DSHB against the
+DP-DSGD algorithm, i.e., the private version of the adversary-free DSGD. We testSAFE -DSHB using SMEA and Filter.
+These algorithms are obtained by running Algorithm 1 while replacing the aggregation method F with the robust algorithm
+in question, namely SMEA and Filter. Note that we run Filter with spectral norm bound σ2
+0 = 0 (see Section B.2) because it
+provides the best empirical results, and it cannot be set to its theoretical value since the values of data heterogeneity G2 and
+stochastic gradient noise σ2 are unknown. We run each experiment with five seeds from 1 to 5 for reproducibility. The code
+we use to launch the different experiments will be made available.
+Adversarial attacks. In our experiments, the adversarial workers execute four state-of-the-art attacks from the robust
+distributed ML literature, namely A Little is Enough (ALIE) (Baruch et al., 2019), Fall of Empires (FOE) (Xie et al., 2019),
+Sign-flipping (SF) (Allen-Zhu et al., 2020), and Label-flipping (LF) (Allen-Zhu et al., 2020).
+The first three attacks rely on the same attack primitive that we explain below, while LF is executed differently.
+Let bt be the attack vector in step t and τ ≥ 0 a fixed real number. In every step t, the adversarial workers send to the server
+the gradient Bt = gt + τtbt, where gt is an estimation of the true gradient at stept. Experimentally, we set gt = 1
+|H|
+P
+i∈H
+g(i)
+t .
+• ALIE: In this attack, bt = σt, where σt is coordinate-wise standard deviation of gt. In our experiments on ALIE, τt
+is chosen through an extensive grid search. Essentially, in each step t, we choose the value that results in the worst
+adversarial vector, i.e, the vector for which the distance to gt is the largest.
+• FOE: In this attack, bt = −gt. All adversarial workers thus send (1 − τt)gt in step t. Similar to ALIE, τt for FoE is
+also estimated through grid searching.
+• SF: In this attack, bt = −gt, and τt = 2. All adversarial workers thus send Bt = bt = −gt in step t.
+• LF: Every adversarial worker computes its gradient on flipped labels. Since the labels l for Phishing are in {0, 1}, the
+adversarial workers flip the labels by computing l′ = 1 − l on the batch, where l′ is the flipped/modified label.
+E.2. Experimental Results
+We present our results in the low privacy regime in Figures 2 and 3, in the mid privacy regime in Figures 4 and 5, and finally
+in the high privacy regime in Figures 6 and 7. We then comment on the results below.
+5https://www.csie.ntu.edu.tw/˜cjlin/libsvmtools/datasets/
+53
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Low Privacy Regime (σNM = 1).
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+Figure 2. Test accuracy on Phishing with f = 3 adversarial workers among n = 7 workers, with β = 0.99. The adversarial workers
+execute the LF (row 1, left), SF (row 1, right), ALIE (row 2, left), and FOE (row 2, right) attacks. Privacy budget after T = 400steps is
+(ϵ, δ) = (1.14, 10−4).
+0 100 200 300 400
+Step number
+0.2
+0.4
+0.6
+0.8Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.25
+0.50
+0.75Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.25
+0.50
+0.75
+1.00Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.25
+0.50
+0.75
+1.00Training Loss
+DP-DSGD
+SMEA
+Filter
+Figure 3. Training loss on Phishing with f = 3 adversarial workers among n = 7 workers, with β = 0.99. The adversarial workers
+execute the LF (row 1, left), SF (row 1, right), ALIE (row 2, left), and FOE (row 2, right) attacks. Privacy budget after T = 400steps is
+(ϵ, δ) = (1.14, 10−4).
+54
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Moderate Privacy Regime (σNM = 2).
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+Figure 4. Test accuracy on Phishing with f = 3 adversarial workers among n = 7 workers, with β = 0.99. The adversarial workers
+execute the LF (row 1, left), SF (row 1, right), ALIE (row 2, left), and FOE (row 2, right) attacks. Privacy budget after T = 400steps is
+(ϵ, δ) = (0.32, 10−4).
+0 100 200 300 400
+Step number
+0.2
+0.4
+0.6
+0.8Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.2
+0.4
+0.6
+0.8Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.25
+0.50
+0.75
+1.00Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.25
+0.50
+0.75
+1.00Training Loss
+DP-DSGD
+SMEA
+Filter
+Figure 5. Training loss on Phishing with f = 3 adversarial workers among n = 7 workers, with β = 0.99. The adversarial workers
+execute the LF (row 1, left), SF (row 1, right), ALIE (row 2, left), and FOE (row 2, right) attacks. Privacy budget after T = 400steps is
+(ϵ, δ) = (0.32, 10−4).
+55
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+High Privacy Regime (σNM = 3).
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+DP-DSGD
+SMEA
+Filter
+Figure 6. Test accuracy on Phishing with f = 3 adversarial workers among n = 7 workers, with β = 0.99. The adversarial workers
+execute the LF (row 1, left), SF (row 1, right), ALIE (row 2, left), and FOE (row 2, right) attacks. Privacy budget after T = 400steps is
+(ϵ, δ) = (0.19, 10−4).
+0 100 200 300 400
+Step number
+0.2
+0.4
+0.6
+0.8Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.2
+0.4
+0.6
+0.8Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.25
+0.50
+0.75
+1.00Training Loss
+DP-DSGD
+SMEA
+Filter
+0 100 200 300 400
+Step number
+0.5
+1.0Training Loss
+DP-DSGD
+SMEA
+Filter
+Figure 7. Training loss on Phishing with f = 3 adversarial workers among n = 7 workers, with β = 0.99. The adversarial workers
+execute the LF (row 1, left), SF (row 1, right), ALIE (row 2, left), and FOE (row 2, right) attacks. Privacy budget after T = 400steps is
+(ϵ, δ) = (0.19, 10−4).
+56
+On the Privacy-Robustness-Utility Trilemma in Distributed Learning
+Discussion. We consider four different attacks executed by the adversarial nodes, and report on the performance of the
+algorithms in three different privacy regimes. Our observations are twofold.
+First, as expected, we see that as the privacy regime becomes more demanding, the performances of DP-DSGD and SMEA
+degrade both in terms of test accuracy and training loss. This confirms that the standard privacy-utility trade-off also occurs
+in the presence of adversarial workers. Second, we see that under all three privacy regimes, SAFE -DSHB with SMEA is
+able to successfully mitigate adversarial attacks while still ensuring strong levels of differential privacy. Indeed, the final
+accuracies reached by SAFE -DSHB with SMEA are around 80% in the low and moderate privacy regimes, and around 75%
+in high privacy (a bit lower under the FOE attack). On the other hand, the training losses are decreasing under all attacks
+and in all privacy regimes, sometimes asymptotically matching the curves of DP-DSGD (e.g., the LF attack in all three
+privacy regimes, the ALIE attack in low and moderate privacy). The same observations hold for SAFE -DSHB with Filter.
+57

@@ -1,0 +1,9205 @@
+Byzantine-Robust and Differentially Private Federated
+Optimization under Weaker Assumptions
+Rustem Islamov1, Grigory Malinovsky 2, Alexander Gaponov 2, Aurelien Lucchi 1,
+Peter Richtárik2, Eduard Gorbunov 3
+1University of Basel, Switzerland, 2KAUST, Saudi Arabia, 3MBZUAI, UAE
+Abstract
+Federated Learning (FL) enables heterogeneous clients to collaboratively train a shared
+model without centralizing their raw data, offering an inherent level of privacy. However, gradi-
+ents and model updates can still leak sensitive information, while malicious servers may mount
+adversarial attacks such as Byzantine manipulation. These vulnerabilities highlight the need to
+address differential privacy (DP) and Byzantine robustness within a unified framework. Existing
+approaches, however, often rely on unrealistic assumptions such as bounded gradients, require
+auxiliaryserver-sidedatasets, orfailtoprovideconvergenceguarantees. Weaddresstheselimita-
+tions by proposingByz-Clip21-SGD2M, a new algorithm that integrates robust aggregation with
+double momentum and carefully designed clipping. We prove high-probability convergence guar-
+antees under standardL-smoothness andσ-sub-Gaussian gradient noise assumptions, thereby
+relaxing conditions that dominate prior work. Our analysis recovers state-of-the-art convergence
+rates in the absence of adversaries and improves utility guarantees under Byzantine and DP set-
+tings. Empirical evaluations on CNN and MLP models trained on MNIST further validate the
+effectiveness of our approach.
+1 Introduction
+The rapid deployment of large-scale machine learning models has positioned Federated Learning
+(FL) [Konečn` y et al., 2016, McMahan et al., 2017a] as a central paradigm, enabling a collection
+of potentially heterogeneous clients, ranging from smartphones and sensors to data centers, to
+collaboratively train a shared model without transmitting their raw data to a central server [Li
+et al., 2020, Yang et al., 2019]. While this setting offers an inherent degree of privacy, it is far from
+complete: gradients and model parameters can still leak sensitive information [Zhu et al., 2019,
+Geipingetal.,2020], andadversariesmayexploitthedistributednatureofFLtolaunchattackssuch
+as membership inference, model stealing, or Byzantine manipulation [Shokri et al., 2017, Tramèr
+et al., 2016, Blanchard et al., 2017]. This dual vulnerability highlights the need to study differential
+privacy, tomitigateprivacyleakage, andByzantinerobustness, toensureresilienceagainstarbitrary
+or malicious participants, within a unified framework. Both challenges share the common difficulty
+of optimizing with corrupted or unreliable updates, whether the corruption arises from deliberate
+noise injection for privacy or from adversarial manipulations. Moreover, addressing these issues is
+not only of algorithmic importance: modern AI systems must also comply with evolving regulatory
+requirements, such as GDPR and the EU AI Act for privacy [GDP, 2016, EUA, 2024], or the EU
+NIS2 Directive, Cyber Resilience Act, and NIST AI Risk Management Framework for security and
+robustness [NIS, 2022, Cyb, 2024, Tabassi et al., 2023].
+In this context, we propose to study Byzantine robustness and differential privacy jointly, with
+the goal of establishing a principled foundation for robust, privacy-preserving federated learning
+and providing a pathway toward trustworthy AI in practice. A central open challenge is to move
+1
+arXiv:2603.23472v2  [cs.LG]  5 Apr 2026
+beyond the strong assumptions that dominate the current literature. Most theoretical analyses in
+differential privacy are carried out under assumptions such as bounded gradients – an assumption
+that fails even for simple quadratic objectives [Li et al., 2022, Wang et al., 2023, Lowy et al., 2023]
+– or by focusing on the full-batch regime [Shulgin et al., 2025b]. Only recently have approaches
+emerged that achieve strong privacy guarantees while retaining favorable optimization performance
+under milder conditions [Islamov et al., 2025b]. Byzantine robustness has evolved largely as a
+separate line of work [Lyu et al., 2022], yet its analyses similarly depend on gradient boundedness
+to establish convergence guarantees [Blanchard et al., 2017, Mhamdi et al., 2018]. Attempts to
+combine DP with Byzantine resilience remain even more limited: existing methods either assume
+access to an auxiliary server-side dataset to obtain a better gradient approximation [Xiang et al.,
+2023], rely on unrealistic aggregation rules [Guerraoui et al., 2021b, Zhang and Hu, 2023], impose
+restrictive bounded-gradient assumptions [Allouah et al., 2023b].
+Motivated by the shortcomings of prior theoretical results, we arrive at the following guiding
+question:
+Is it possible to develop an algorithm that provably converges in the presence of mali-
+cious clients while simultaneously providing strong differential privacy guarantees under
+standard assumptions?
+Main Contributions.We provide an affirmative answer to the above question. In doing so, we
+make the following contributions:
+•We introduceByz-Clip21-SGD2M, a new algorithm that combines robust aggregation with
+double momentum and carefully designed clipping, achieving efficient performance under both
+Byzantine and differential privacy adversaries.
+•Weprovideahigh-probabilityconvergenceanalysisofByz-Clip21-SGD2MunderL-smoothness
+andσ-sub-Gaussian gradient noise, thereby relaxing assumptions that have been used in prior
+work (see Table 1 for details). Our results improve utility guarantees by avoiding unrealistic
+assumptions, while recovering state-of-the-art convergence rates in the absence of Byzantine
+or DP adversaries.
+•We complement our theoretical analysis with empirical validation, demonstrating the effec-
+tiveness ofByz-Clip21-SGD2Mon CNN and MLP models trained on the MNIST dataset.
+2 Related Works
+Error Feedback.Biased compression in federated learning reduces communication by transmit-
+ting compressed local updates that are not unbiased estimates of the original signal [Ajalloeian and
+Stich, 2020, Beznosikov et al., 2023, Demidovich et al., 2023]. Common examples include Top-K
+sparsification [Alistarh et al., 2017, Wangni et al., 2018] and sign-based compression [Bernstein
+et al., 2018, Stich et al., 2018]. While these methods are efficient in practice, the introduced bias
+can accumulate and affect convergence, requiring Error Feedback (EF) [Seide et al., 2014] tech-
+niques to mitigate its impact. Earlier works primarily focused on the single-node setting or relied
+on restrictive assumptions, such as bounded gradients, bounded compression error, or gradient
+dissimilarity, to establish convergence [Stich et al., 2018, Stich and Karimireddy, 2019, Koloskova
+et al., 2019]. Moreover, the convergence rates ofEFdegrade in the presence of client heterogeneity,
+and this dependence is intrinsic rather than a proof artifact [Gorbunov et al., 2020]. To overcome
+these limitations, [Richtárik et al., 2021] proposedEF21, a variant whose guarantees do not depend
+on heterogeneity bounds. Nevertheless,EF21-SGD still requires increasingly large batch sizes to
+achieve a target accuracy [Fatkhullin et al., 2024]. Importantly, this limitation is not fundamental:
+recent work demonstrates that incorporating Heavy-Ball momentum removes the need for large
+batches [Fatkhullin et al., 2024]. Later,EF21was extended to several practical setups [Fatkhullin
+et al., 2025, Makarenko et al., 2022]. In a parallel line of research, Gao et al. [2023, 2025b] in-
+troducedEControl-type Error Feedback methods with convergence guarantees extending to the
+2
+Table 1:Convergence guarantees of algorithms in the presence of Byzantine and/or DP adver-
+saries. ˜Ohides logarithmic and decaying-with-Tterms. Notation: (s)CVX=(strongly) convex functions,
+nCVX=non-convex functions, DP=supports differential privacy, BR=supports Byzantine robustness, E=In-
+Expectation analysis, P=High-probability analysis.
+Method Utility DP BR Assumptions AdditionalCommentsType
+SoteriaFL[Liu et al., 2022] ˜O(√d√Gε
+) ✓ ✗ M-bounded gradientsnCVX, local DP E
+α-Norm[Shulgin et al., 2025a]˜O(√d√Gε+R)(a) ✓ ✗ L-smoothnessFull-batch gradientsnCVX, local DP E
+Clip21-SGD2M[Islamov et al., 2025b] ˜O(√d√Gε
+)(b) ✓ ✗ L-smoothnessσ-sub-Gaussian noisenCVX, local DP P
+Byz-SGDM[Karimireddy et al., 2020]˜O(δbyzζ2)(c) ✗ ✓ L-smoothnessBounded variance nCVX E
+Robust D-SHB[Allouah et al., 2023a] ˜O(δbyzM2) ✗ ✓ L-smoothnessFull-batch gradients nCVXCVX E
+Byz-VR-MARINA[Gorbunov et al., 2022b]˜O(δbyzζ2) ✗ ✓ L-smoothnessLocal functions are finite-sumsnCVX E
+Safe-DSHB[Allouah et al., 2023b]˜O(dGε2 +δbyz
+ε2 +δbyzM2) ✓ ✓M-bounded gradients sCVX, local-DP E
+DP-BREM[Gu et al., 2025] ˜O(δbyzζ2+δbyz
+√d√Gε
+)(d) ✓ ✓ L-smoothnessMomentum buffers are i.i.dnCVX, central DP E
+P&S Learning[Xiang et al., 2023] N/A(e) ✓ ✓ L-smoothness∇fi(x)−∇fi(x⋆)are sub-GaussianAccess to external non-private datasetsCVX, local DP P
+Byz-Clip21-SGD2M[Ours]
+˜O(R+R2/3)(b,f)
+R=
+√d√Gε+
+√δbyzd√Gε +√δbyzN ✓ ✓ L-smoothnessσ-sub-Gaussian noisenCVX, local-DP P
+(a)HereR := maxi∈G∥∇fi(x0)−g 0
+i∥.
+(b)Derived under the assumption
+√
+d/
+√
+Gε≥1.
+(c)ζ 2 denotes the constant in the gradient dissimilarity assumption.
+(d)The provided rate contradicts the lower bound due to the unrealistic assumption that momentum buffers are i.i.d.
+distributed.
+(e)The authors do not provide explicit bounds.
+(f)In the general case,N=LF 0 +ζ 2 +σ(
+√
+LF 0 +ζ), whereF 0 =f(x 0)−f ⋆ (see Theorem 5.1). In the presence of
+Byzantine adversaries only,N=
+√
+δbyzζ2 (see Theorem 5.2).
+convex setting. Error Feedback has also been studied in decentralized [Yau and Wai, 2022, Huang
+et al., 2023, Islamov et al., 2024] setting, for non-smooth [Islamov et al., 2025a] and composite [Gao
+et al., 2025a] optimization problems, as well as in the context of second-order methods [Safaryan
+et al., 2021, Qian et al., 2021, Islamov et al., 2023].
+Byzantine Robust Optimization.Naively averaging updates from clients in a distributed set-
+ting lacks robustness since even a single Byzantine client can destabilize training [Chen et al.,
+2017]. To address this, numerous alternatives to averaging have been proposed to enhance robust-
+ness against adversarial updates [Pillutla et al., 2022, Yin et al., 2018, Damaskinos et al., 2019,
+Karimireddy et al., 2021, Allouah et al., 2024a].
+Nevertheless, permutation-invariant algorithms, i.e., the ones whose output is unchanged un-
+der shuffling of the stochastic gradients computed on different workers [Karimireddy et al., 2021,
+Definition B], alone cannot ensure convergence in the Byzantine regime [Karimireddy et al., 2021,
+Theorem II]. This limitation can be alleviated by incorporating update shuffling and averaging in
+random groups [Karimireddy et al., 2020], variance-reduction techniques [Wu et al., 2020, Gor-
+bunov et al., 2022b], or preprocessing based on the averaging with nearest neighbors [Allouah
+et al., 2023a]. Beyond these, other approaches include concentration-based gradient filtering [Alis-
+tarh et al., 2018, Allen-Zhu et al., 2020], server-free protocols with random checks [Gorbunov et al.,
+2022a], redundant computations [Chen et al., 2018, Rajput et al., 2019], and reputation-based
+mechanisms [Rodrıguez-Barroso et al., 2020, Regatti et al., 2020, Xu and Lyu, 2020]. More recent
+works further extend these ideas to partial participation [Malinovsky et al., 2024], decentralized
+training [He et al., 2022], and communication compression [Rammal et al., 2024]. In most of these
+cases, the theoretical analysis is carried out under theL-smoothness andζ2-gradient dissimilarity1
+1More precisely, the mentioned works rely either on 1
+G
+∑
+i∈G∥∇fi(x)−∇f(x)∥ 2≤ζ 2 or 1
+G
+∑
+i∈G∥∇fi(x)−∇f(x)∥ 2≤
+3
+assumptions, which have become standard in Byzantine robustness literature.
+Differentially Private Optimization.Differential privacy (DP) is typically achieved by clip-
+ping each client’s update and adding Gaussian noise, limiting the influence of any individual client
+McMahan et al. [2017b]. In central DP, a trusted server adds noise before updating the global
+model, while in local DP, clients perturb updates before sending them, protecting privacy even
+from the server [Kasiviswanathan et al., 2011, Allouah et al., 2024b]. Local DP offers stronger pri-
+vacy but reduces model utility, though this can be mitigated using secure shufflers or aggregators
+[Erlingsson et al., 2019, Bonawitz et al., 2017]. DP can also enable update compression without
+additional cost [Chaudhuri et al., 2022, Hegazy et al., 2023]. Private optimization methods, such
+asDP-SGD[Abadi et al., 2016], enforce DP by clipping gradients and adding noise scaled to the
+clipping sensitivity. However, most convergence analyses neglect the bias introduced by clipping.
+For smooth functions, guarantees typically assume eitherbounded gradient norms[Li et al., 2020,
+Zhang et al., 2020b, Murata and Suzuki, 2023, Wang et al., 2023, Lowy et al., 2023, Wang et al.,
+2024] or thatclipping is effectively inactive[Noble et al., 2022, Zhang et al., 2024]. Recently, several
+works have provided improved analyses ofDP-Clip-SGDand its variants. In the single-node setting,
+generalized smoothness has also been considered without restrictive requirements forDP-Clip-SGD
+[Koloskova et al., 2023]. Next, Khah et al. [2025] also focus on the single-node setting and provide
+high-probability results under the heavy-tailed noise assumption and arbitrary clipping level for
+DP-Clip-SGD. Zhao et al. [2025] consider a projectedSGD-type method utilizing DP mean esti-
+mation and provide its in-expectation convergence bounds. Compagnoni et al. [2026] study SDE
+approximation ofDP-Clip-SGDin the single-node setup. In the FL setting, analysis under realistic
+conditions in the presence of differential privacy has been studied in Islamov et al. [2025b], Shulgin
+et al. [2025a,b].
+Differentially Private and Byzantine Robust Methods.Although substantial progress has
+been made separately in differential privacy and Byzantine robustness, their interaction in dis-
+tributed learning is still not well understood. Recent efforts to address both aspects at once remain
+limited. A key limitation of existing theoretical work is the reliance on restrictive assumptions,
+often unrealistic and mainly introduced to simplify the analysis. For example, some studies focus
+on a single aggregation rule [Guerraoui et al., 2021b], while others assume a particular noise struc-
+ture near the minimizer or even access to a non-private external server-side dataset [Xiang et al.,
+2023]. Other analyses restrict attention to the strongly convex case [Gao et al., 2024, Allouah
+et al., 2023b] or impose functional similarity assumptions that do not hold in heterogeneous feder-
+ated learning [Lan et al., 2025]. Further limitations include assuming i.i.d. momentum buffers [Gu
+et al., 2025] or bounded-gradient conditions [Guerraoui et al., 2021a, Gao et al., 2024, Allouah et al.,
+2023b]. Taken together, these limitations highlight the significant challenges in jointly addressing
+differential privacy and Byzantine robustness.
+We summarize the existing works and the assumptions underlying their convergence analyses
+for establishing utility bounds in Table 1. Compared to prior work, our theoretical analysis relies
+on the weakest set of assumptions.
+3 Preliminaries
+Problem Formulation.In distributed training with potentially Byzantine clients, the goal is to
+minimize the empirical loss
+min
+x∈Rd
+
+f(x) := 1
+G
+∑
+i∈G
+fi(x)
+
+,(1)
+wherex∈R d denotes the model parameters. The set of regular clients isG, with cardinalityG:=
+|G|, while the total number of clients isn. The remaining clients,B:= [n]\G, are Byzantine: instead
+Aζ∥∇f(x)∥ 2+ζ 2 for allx∈R d.
+4
+of following the prescribed learning algorithm, they may transmit arbitrary (possibly adversarial)
+vectors, and we assume they also observe the updates shared by the other clients2. The number
+of Byzantine clients is|B|=δ byzn, withδ byz < 1
+2 to ensure that Byzantine clients do not form
+a majority; otherwise, problem (1) becomes unsolvable [Pai et al., 2021]. Each clienti∈[n]is
+associated with a local loss functionfi, defined over its own data.
+Differential Privacy.Next, we will use the following classical definition of(ε,δ)-Differential
+Privacy ((ε,δ)-DP), which introduces plausible deniability into the output of a learning algorithm.
+Definition 3.1([Dwork et al., 2014]).A randomized methodM:D→Rsatisfies(ε,δ)-Differential
+Privacy ((ε,δ)-DP for shortness) if for any two datasetsD,D′∈Dthat differ in 1 sample and for
+anyS⊆R
+P(M(D)∈S)≤e εP(M(D′)∈S) +δ.(2)
+Decreasingεandδstrengthens privacy by making it harder to identify the particular data point
+that differs between neighboring datasets.
+Robust Aggregation.We follow the definition of Allouah et al. [2023a] that covers many prac-
+tical aggregation rules introduced in prior work [Farhadkhani et al., 2022, Karimireddy et al., 2020],
+including coordinate-wise median [Yin et al., 2018] and geometric median [Pillutla et al., 2022].
+Definition 3.2([Allouah et al., 2023a]).Let the ratio of Byzantine clients beδ byz :=|B|/n< 1/2
+andc≥0be a constant. The aggregation ruleRAggis said to be(δ byz,c)-robust if for any vectors
+{x1,...,x n}⊆R d and any subsetS⊂[n]of sizen−|B|the outputˆx= RAgg(x 1,...,x n)satisfies
+∥ˆx−x∥2≤ cδbyz
+n−|B|
+∑
+i∈S
+∥xi−x∥2 (3)
+wherex= 1
+n−|B|
+∑
+i∈Sxi.
+Under this definition, robust aggregators deliver a worst-case guarantee: forS=G, the out-
+putˆxstays close to the mean xof regular clients in squared distance. The rule can be further
+strengthened by input mixing steps such asNNM[Allouah et al., 2023a]. Importantly, we require the
+worst-case property, i.e., (3) holds for every vector collection{xi}n
+i=1 to enable our high-probability
+analysis. In contrast, prior work often studies stochastic aggregators under in-expectation guaran-
+tees [Karimireddy et al., 2021, 2020, Gorbunov et al., 2022b, Malinovsky et al., 2024].
+Assumptions.In the convergence analysis ofByz-Clip21-SGD2M, we make use of two standard
+assumptions. The first describes the class of smooth functions, a standard assumption made in the
+non-convex optimization literature [Ghadimi and Lan, 2013, Carmon et al., 2020].
+Assumption 3.1.For alli∈G,f i isL-smooth, i.e., for allx,y∈R d we have
+∥∇fi(x)−∇f i(y)∥≤L∥x−y∥.(4)
+Additionally, we havef⋆ := infx∈Rdf(x)>−∞.
+To simplify the presentation, we consider the worst smoothness constant across clients. Next,
+we introduce the assumption that formalizes the stochasticity in local gradients.
+Assumption 3.2.Each clienti∈Ghas access to aσ-sub-Gaussian unbiased estimator∇f i(x,ξ)
+of a local gradient∇fi(x), i.e., there exists a constantσ≥0such that for allx∈R d we have
+E[∇fi(x,ξ)] =∇f i(x),E[exp( ∥θi∥2
+/σ2)]≤e,(5)
+whereξdenotes the source of stochasticity andθi :=∇f i(x,ξ)−∇f i(x).
+2This assumption is admittedly strong and often unrealistic in practice. Nevertheless, it is widely adopted in the
+Byzantine-robust learning literature, since methods that guarantee robustness against such powerful adversaries also
+remain robust in more practical settings, where attackers are typically weaker.
+5
+Sub-Gaussian noise assumption is standard when analyzing high-probability complexity ofSGD-
+type algorithms [Ghadimi and Lan, 2012, Nemirovski et al., 2009, Liu et al., 2023].
+Bounds on data heterogeneity are essential in the analysis of Byzantine-robust algorithms; with-
+out such assumptions, robustness is unachievable in fully arbitrary heterogeneous environments.
+A common approach is to assume a bounded average deviation of local gradients from the global
+gradient (gradient dissimilarity) [Wu et al., 2020, Gorbunov et al., 2022b, Allouah et al., 2023b], as
+formalized in Assumption 3.3. For our high-probability analysis, we instead require the maximum
+in Assumption 3.3a. However, we impose this condition only at initializationx0, whereas prior
+work typically assumes it holds uniformly over the entire space.
+Assumption 3.3.The local gradients{∇f i(x)}i∈G satisfy boundedζ 2-gradient dissimilarity for
+someζ≥0, i.e., for allx∈R d we have
+1
+G
+∑
+i∈G
+∥∇fi(x)−∇f(x)∥ 2≤ζ 2.(6)
+Assumption 3.3a.The local gradients{∇fi(x0)}i∈G satisfy boundedζ 2-gradient dissimilarity for
+someζ≥0, i.e., we have
+max
+i∈G
+∥∇fi(x0)−∇f(x 0)∥2≤ζ 2.(7)
+Remark 3.1.Our results also extend to a more general condition in which the right-hand side
+of(7)scales linearly with∥∇f(x 0)∥2, namely,max i∈G∥∇fi(x0)−∇f(x 0)∥2≤A ζ∥∇f(x 0)∥2+ζ2.
+For clarity of presentation, the general result is provided in the supplementary materials, while we
+assumeA ζ = 0in the main text. Note that this assumption always holds, i.e., for any problem of
+the form(1), there existsζ≥0such that inequality(7)is satisfied. However, as we explicitly show
+in our theoretical results, the value ofζdirectly affects the convergence bounds since it is required
+to establish a bound∆on the initial value of the Lyapunov functionΦ0 introduced in(9).
+4 Algorithm Design
+We introduce theByz-Clip21-SGD2Malgorithm, designed to operate under both Byzantine failures
+and differential privacy noise. The main steps are outlined in Algorithm 1, followed by a detailed
+discussion highlighting the key design innovations and their rationale.
+Momentum Mechanism.Byz-Clip21-SGD2Memploys two momentum buffers,{v t
+i}i∈G on the
+clientsideand{m t
+i}i∈G ontheserverside, bothessentialformitigatingnoiseduringtraining. Onthe
+client side, momentum with parameterβsmooths mini-batch gradient noise; without it, the method
+may fail to converge, as seen in algorithms such asEF21-SGDandClip21-SGD, which provably fail
+to converge to arbitrary accuracyεunder mini-batch noise [Fatkhullin et al., 2024, Islamov et al.,
+2025b]. On the server side, momentum with parameterˆβcounteracts the accumulation of DP-noise
+in the buffers{mt
+i}i∈G, preventing it from destroying convergence due to fast accumulation of the
+DP noise in the updates.
+Clipping.It is crucial to bound model updates before injecting DP-noise. Without clipping,
+updates may have arbitrarily large norms, which would dominate the injected noise and invalidate
+the privacy guarantee. Clipping restricts each update to a controlled range, ensuring that the
+privacy guarantees remain meaningful and that the added noise achieves its intended effect. In
+Byz-Clip21-SGD2M, we employ the standard norm-clipping mechanism, which rescales updates
+relative to a thresholdτ:
+clipτ(x) =
+
+
+
+τ
+∥x∥x,if∥x∥>τ,
+x,if∥x∥≤τ.
+(8)
+This procedure ensures a fixed sensitivity at each update, after which Gaussian noise is added to
+the clipped values to provide local(ε,δ)-DP guarantees. Equivalently, the same effect can be inter-
+preted as adding noise directly to the averaged client update. Consequently,Byz-Clip21-SGD2Mis
+6
+Algorithm 1Byz-Clip21-SGD2M
+Require:x 0∈R d,momentum parametersβ, ˆβ∈(0,1],step-sizeγ >0,g 0
+i =m 0
+i ∈R d,clipping
+parameterτ >0, DP-noise varianceσ 2
+ω≥0
+1:fort= 0,...,T−1do
+2:x t+1 =x t−γg t
+3:fori∈Gdo
+4:v t+1
+i = (1−β)v t
+i +β∇f i(xt+1,ξt+1
+i )
+5:ω t+1
+i ∼N(0,σ 2
+ωI)
+6:c t+1
+i = clipτ(vt+1
+i −g t
+i) +ωt+1
+i
+7:g t+1
+i =g t
+i + ˆβclipτ(vt+1
+i −g t
+i)
+8:end for
+9:fori∈Bdo
+10:c t+1
+i = (∗)sends arbitrary vector
+11:end for
+12:m t+1
+i =m t
+i + ˆβct+1
+i
+(∗)
+13:g t+1 = RAgg(mt+1
+1 ,...,m t+1
+n )
+14:end for
+(∗) This step can be moved to the client side without affecting the DP guarantee and convergence analysis,
+thanks to the post-processing property [Dwork et al., 2014, Proposition 2.1].
+compatible with all of the techniques discussed above and can also be deployed in the central DP
+setting, whereσ 2
+ω scales down with the number of clients.
+Error Feedback.To mitigate client drift, which arises from the potentially different local data
+distributions across clients, we augment our method with anEF21-style error feedback mechanism
+on the client side. Error feedback controls the discrepancy between the true global update and
+local updates sent to the server. Incorporating this mechanism intoByz-Clip21-SGD2Mallows the
+algorithm to compensate for the bias introduced by heterogeneous client data, thereby ensuring
+convergence under larger levels of data heterogeneity. This design choice makes the method robust
+to one of the central difficulties in federated optimization and allows eliminating the need for the
+bounded gradient assumption imposed in prior work.
+Robust Aggregation.At the heart of robustByz-Clip21-SGD2Mlies the aggregation ruleRAgg.
+To mitigate adversarial clients that attempt to disrupt training, we employ a robust aggregation
+rule satisfying Definition 3.2. Robust aggregation limits the damage that Byzantine clients can
+cause during training.
+Challenges of Designing Differential Private and Byzantine-Robust Algorithms.De-
+signingalgorithmsthatarebothdifferentiallyprivateandByzantine-robustisinherentlychallenging
+as the two objectives often conflict with each other. Differential privacy requires adding extra noise
+to the raw updates, which reduces their consistency and makes it easier for adversarial updates
+to remain undetected. Moreover, using robust aggregation to combine the DP-noisy updates can
+amplify the detrimental effects of noise, further hindering convergence. Consequently, theoretical
+analyses must be carried out with particular care and often under restrictive assumptions. Over-
+coming these limitations requires carefully designing algorithms that balance privacy, robustness,
+and practical learnability.
+5 Theoretical Analysis
+7
+Our convergence analysis is based on a carefully designed Lyapunov function
+Φt :=f(x t)−f ⋆ + 8γβ
+ˆβ2η2
+1
+G
+∑
+i∈G
+∥vt
+i−∇fi(xt)∥2+ 2γ
+ˆβη
+1
+G
+∑
+i∈G
+∥gt
+i−v t
+i∥2+2γ
+β∥vt−∇f(x t)∥2,(9)
+where vt := 1
+G
+∑
+i∈Gvt
+i, andη∼τ, whose value will be specified in the main convergence theorem.
+The decrease of this Lyapunov function guarantees convergence of the algorithm, as it implies
+thatf(x t)−f ⋆ decreases during the training. Moreover, as the iterations proceed, the auxiliary
+variablesv t
+i andg t
+i become increasingly accurate approximations of∇fi(xt)andv t
+i, respectively. In
+other words, the momentum buffers provide a smoothed estimate of the true gradients, demonstrat-
+ing the benefit of momentum in reducing variance and effectively mitigating the noise introduced
+during training. The coefficients in the Lyapunov function are carefully chosen to balance its dif-
+ferent components, ensuring that each term contributes at the same order and none dominates the
+others. The detailed proofs are deferred to Sections D and E.
+Theorem 5.1(Simplified).Let Assumptions 3.1, 3.2, and 3.3a hold, andα∈(0,1)be a failure
+probability. Let ˜Binit := maxi∈G{∥∇fi(x0)∥}>3τ,η∼ τ/˜Binit, and∆≥Φ 0 forΦ 0 defined in(9).
+Then there exists a choice of hyperparametersγ,β, and ˆβ(see a full statement in Theorem D.1)
+such that the iterates ofByz-Clip21-SGD2M(Alg. 1) run with DP-noise varianceσ 2
+ω >0and
+(c,δ byz)-robust aggregator(δbyz>0)satisfy with probability at least1−αthat
+1
+T
+T−1∑
+t=0
+∥∇f(xt)∥2≤ ˜O
+(
+∆0(R+R 2/3)
+)
+,
+where
+R=
+√
+dσω√
+GTτ
++
+√
+cδbyzdσω√
+Tτ
++
+√
+cδbyz, F 0 :=f(x 0)−f ⋆,
+∆0 :=
+√
+L∆(
+√
+L∆ + ˜B+σ) = ˜O(LF 0 +ζ 2 +σ(
+√
+LF 0 +ζ)),
+and ˜Ohides constant and logarithmic factors and higher order terms decreasing inT.3
+Remark 5.1.We stress that Assumption 3.3a is invoked only to bound the constant∆ 0; the
+convergence guarantee itself still holds without this condition due to the use of clipping. This general
+result highlights that bounded heterogeneity is primarily used to control the norms of the updates.
+In our setting, the updatesct+1
+i are used to update the momentamt+1
+i , which are then aggregated
+throughRAgg. The stability ofm t+1
+i is maintained by the clipping operator, since without such
+control the norm could otherwise grow unbounded. Moreover, due to our design choiceˆβ∼1/T,
+the growth rate of the norm is limited toO(tτ ˆβ) =O(1), ensuring that the momenta remain
+well-behaved throughout the training process.
+Next, we consider the implication of this theorem whenσω is set in a special way such that
+each step ofByz-Clip21-SGD2Msatisfies local-(ε,δ)-DP.
+Corollary 5.1(Simplified).Under the setup of Theorem 5.1, letσ ω = Θ
+(
+τ
+ε
+√
+Tlog( T
+δ ) log(1
+δ )
+)
+for someε,δ∈(0,1). Then there exists a choice of hyperparametersγ,β, and ˆβ(see a full
+statement in Corollary D.1) such that allTiterations ofByz-Clip21-SGD2Msatisfy local(ε,δ)-
+DP with robustness-privacy-utility trade-off bounded as
+1
+T
+T−1∑
+t=0
+∥∇f(xt)∥2≤ ˜O
+(
+∆0(R+R 2/3)
+)
+,
+with probability at least1−α, where
+R=
+√
+d√
+Gε
++
+√
+cδbyz
+√
+d
+ε +
+√
+cδbyz.
+3The failure probabilityαappears in the logarithmic terms similar to prior work [Fang et al., 2019, Bassily et al.,
+2021, Sadiev et al., 2023].
+8
+3 8 13 18 23
+Privacy Budget "
+CNN, 2 Byzantine Clients, ^± = 0.09
+10
+20
+30
+40
+50
+60
+70Final T est Accuracy
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+CNN, 5 Byzantine Clients, ^± = 0.2
+10
+20
+30
+40
+50
+60
+70
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+CNN, 7 Byzantine Clients, ^± = 0.26
+10
+20
+30
+40
+50
+60
+70
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 2 Byzantine Clients, ^± = 0.09
+20
+30
+40
+50
+60
+70
+80Final T est Accuracy
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 5 Byzantine Clients, ^± = 0.2
+20
+30
+40
+50
+60
+70
+80
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 8 Byzantine Clients, ^± = 0.29
+20
+30
+40
+50
+60
+70
+80
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+Figure 1: Performance ofByz-Clip21-SGD2M,Byz-Clip-SGD(Algorithm 3), andSafe-DSHB(Al-
+gorithm 4) when training CNN (top line) and MLP (bottom line) models on the MNIST dataset
+for different numbers of Byzantine clients and privacy budgets, when Byzantine clients useIPM
+attack.
+In Corollary 5.1, the first term corresponds to the error arising from privacy, while the last term
+reflects the error introduced by the presence of Byzantine clients. The middle term represents the
+additional penalty incurred when enforcing both requirements simultaneously. Our utility bound
+takes a similar form as the lower bound in the strongly convex case [Allouah et al., 2023b], which
+demonstrates that our analysis is essentially tight. In particular, Theorem 5.1 shows that the
+impacts of privacy and Byzantine adversaries multiply. The privacy analysis ofByz-Clip21-SGD2M
+then follows from the well-known result in (Dwork et al. [2014, Theorem 3.22] in combination with
+the advanced composition theorem ([Dwork et al., 2014, Theorem 3.20]), we obtain that allT
+iterations ofByz-Clip21-SGD2Mare local(ε,δ)-differentially private.
+Comparison to prior work.We analyzeByz-Clip21-SGD2Munder the standardL-smoothness
+andσ-sub-Gaussian assumptions, thereby improving over earlier work that required the far more
+restrictive bounded-gradient condition [Zhu and Ling, 2022, Allouah et al., 2023b]. To our knowl-
+edge, the only high-probability study of optimization algorithms in the simultaneous presence of
+DP and Byzantine adversaries is due to Xiang et al. [2023]; however, their analysis is limited to
+a single attack model and relies on strong assumptions, thereby limiting its applicability. Other
+works rely on expectation-based analysis, yet still impose restrictive assumptions; see Table 1 for
+a concrete comparison. By contrast, our convergence guarantee forByz-Clip21-SGD2Mdepends
+only logarithmically on the failure probabilityα, which is consistent with standard high-probability
+analyses, and holds for any aggregation rule satisfying Definition 3.2.
+Main Challenges in the Analysis.Server-side aggregation induces a bias between the server
+aggregateg t and the honest-average update1
+G
+∑
+i∈Gmt
+i. This bias scales multiplicatively with the
+DP-noise varianceσω andcδ byz; controlling it without assuming that the gradients are bounded
+requires a careful analysis with well-calibrated hyperparameters. To address this, we treat clipping
+as a contractive compressor, with the complication that its contraction factor is input-dependent,
+which motivates a high-probability analysis. Using a refined inductive argument, we show that
+the inputs to the clipping operator remain bounded with high probability. Finally, obtaining only
+poly-logarithmic dependence on the failure probabilityαhinges on a careful decomposition of the
+noise terms, each controlled via concentration inequalities.
+5.1 Convergence in Special Cases
+We now examine several special cases of our bound, which showcase both the tightness of our
+analysis and the broad applicability ofByz-Clip21-SGD2M. Most follow directly from Theorem 5.1.
+9
+3 8 13 18 23
+Privacy Budget "
+MLP, 2 Byzantine Clients, ^± = 0.08
+10
+20
+30
+40
+50
+60
+70
+80Final T est Accuracy
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 5 Byzantine Clients, ^± = 0.2
+10
+20
+30
+40
+50
+60
+70
+80
+ Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 8 Byzantine Clients, ^± = 0.32
+10
+20
+30
+40
+50
+60
+70
+80
+ Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 11 Byzantine Clients, ^± = 0.44
+10
+20
+30
+40
+50
+60
+70
+80
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 1 Byzantine Clients, ^± = 0.04
+10
+20
+30
+40
+50
+60
+70
+80Final T est Accuracy
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 5 Byzantine Clients, ^± = 0.2
+10
+20
+30
+40
+50
+60
+70
+80
+ Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 7 Byzantine Clients, ^± = 0.28
+10
+20
+30
+40
+50
+60
+70
+80
+ Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+3 8 13 18 23
+Privacy Budget "
+MLP, 10 Byzantine Clients, ^± = 0.4
+10
+20
+30
+40
+50
+60
+70
+80
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M
+Figure 2: Performance ofByz-Clip21-SGD2M,Byz-Clip-SGD(Algorithm 3), andSafe-DSHB(Al-
+gorithm 4) when training CNN (top line) and MLP (bottom line) models on the MNIST dataset
+for different numbers of Byzantine clients and privacy budgets, when Byzantine clients use label
+flipping attack.
+Absence of DP and Byzantine Adversaries.Settingσ ω = 0andδ byz = 0significantly
+simplifies the choice of hyperparameters. In particular, we can setγ∼β/Land ˆβ= 1. The following
+corollary provides a formal convergence in this setting, obtained directly from Theorem 5.1.
+Corollary 5.2(Simplified).Under assumptions of Theorem 5.1, letσ ω = 0andδ byz = 0. Then,
+there exists a set of hyperparametersγ∼β/Land ˆβ= 1such that the iterates ofByz-Clip21-SGD2M
+satisfy with probability at least1−αthat 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 is bounded by
+˜O
+(
+L∆(1 + ˜B/τ)
+T + σ(
+√
+L∆ + ˜B+σ)√
+GT
+)
+This result yields the standard˜O(1/
+√
+GT)convergence rate, which matches known lower bounds
+in this regime [Arjevani et al., 2023]. Importantly, it is established under only the standard assump-
+tions ofL-smoothness andσ-sub-Gaussian gradient noise, thereby improving over prior results [Liu
+et al., 2022, Noble et al., 2022, Allouah et al., 2024b].
+DP in the absence of Byzantine Clients.As a next special case, we consider the setting
+where data is protected solely through DP noise injection, with no Byzantine clients present (i.e.,
+δbyz = 0). In this regime, the privacy-utility trade-off can be obtained by simply settingδbyz = 0
+in Corollary 5.1.
+Corollary 5.3(Simplified).Under the setup of Theorem 5.1, letσω = Θ
+(
+τ
+ε
+√
+Tlog( T
+δ ) log(1
+δ )
+)
+for
+someε,δ∈(0,1)andδ byz = 0. Then there exists a choice of hyperparametersγ,β, andˆβsuch that
+the iterates ofByz-Clip21-SGD2Msatisfy with probability at least1−αthat 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 is
+bounded by
+√
+L∆(
+√
+L∆ + ˜B+σ)· ˜O
+
+
+√
+d√
+Gε
++
+(√
+d√
+Gε
+)2/3
+.
+In this setting, our general theorem subsumes the results of Islamov et al. [2025b]. Moreover,
+in modern applications where the model sizedis much larger than the number of regular clientsG
+[Charles et al., 2024, Chua et al., 2024], the dominant privacy–utility term is˜O(
+√
+d/
+√
+Gε), matching
+known lower bounds in this regime [Duchi et al., 2018]. Moreover, unlike prior work, this result
+does not rely on unrealistic problem assumptions.
+Byzantine robustness in the absence of DP-noise.In this regime, clipping, originally re-
+quired for privacy guarantees, is no longer needed. Accordingly, we setτ= +∞and ˆβ= 1in
+10
+Byz-Clip21-SGD2M, which reduces to the algorithm analyzed by Karimireddy et al. [2020]; see
+Algorithm 2. This simplification also removes the need to store the server-side momentum buffers
+{mt
+i}n
+i=1. Since applying Theorem 5.1 directly in this case would yield weaker guarantees, we in-
+stead develop a dedicated high-probability analysis, leading to much simpler step-size conditions.
+Furthermore, the Lyapunov function itself becomes considerably simpler, as the buffers{gt
+i}i∈G are
+no longer required (see Equation (95)).
+Theorem 5.2(Simplified).Let Assumption 3.1, Assumption 3.2 and Assumption 3.3 hold. Then
+there exists a choice of hyperparametersγ,β, andˆβ= 1such that the iterates ofByz-Clip21-SGD2M
+withσ ω = 0satisfy with probability at least1−αthat 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 is bounded by
+˜O
+(
+LF 0
+T + σ(
+√
+LF 0 +σ/
+√
+G+
+√
+cδbyz(ζ+σ)√
+GT
++cδ byzζ2
+)
+.
+We establish thatByz-Clip21-SGD2Mconverges at rate ˜O(1/
+√
+GT)to a neighborhood of size
+˜O(cδbyzζ2), matching the in-expectation lower bound of Karimireddy et al. [2020].
+6 Experiments
+Todemonstratetheefficacyoftheproposedalgorithm, wetesttheperformanceofByz-Clip21-SGD2M
+againstByz-Clip-SGD(Algorithm 3) andSafe-DSHB(Algorithm 4) [Allouah et al., 2023b] when
+training CNN and MLP models on the MNIST dataset [LeCun et al., 2010]. We fix the number
+of regular clients to20and distribute the dataset among them equally. Then, we add Byzan-
+tine clients that performIPMattack [Xie et al., 2020] on the vectors transmitted from the clients
+to the server. In particular, each Byzantine client computes the average of the transmitted vec-
+tors of regular clients and multiplies the average by−10as described in Xie et al. [2019] (Fig-
+ure 1). We test performance when varying the number of Byzantine clients and the privacy budget
+ε∈{3,8,13,18,23}. For each algorithm we perform an extensive tuning of the learning rate param-
+eter in{10,1,10 −1,10−2,10−3}and clipping thresholdτ∈{1,10 −1,10−2,10−4,10−5,10−6}. For
+Byz-Clip21-SGD2MandSafe-DSHB, we fix the local momentum parameterβ= 0.1, while we use
+ˆβ= 0.01forByz-Clip21-SGD2M. In such a setting, every algorithm allocates an equal amount of
+privacy budget for tuning, since the set of tested hyperparameters remains the same across algo-
+rithms. We test the performance of algorithms with a batch size64for MLP and32for CNN
+training. Consistent with our theory, where we assume access toσ-sub-Gaussian stochastic gradi-
+ents, we disable privacy amplification by sub-sampling and inject DP noise with standard deviation
+σω = τ
+ε
+√
+Tlog ( 1/δ),whereTis the total number of iterations.
+The results in Figure 1 present the mean and one standard deviation across three random
+seeds. In all configurations,Byz-Clip21-SGD2Mis competitive, matching or surpassing the base-
+lines in test accuracy. These findings align with our theory and provide empirical evidence that
+Byz-Clip21-SGD2Mis an effective method for training under DP noise injection and Byzantine
+attacks. Additional experimental results and training details are summarized in Section F.
+7 Conclusion and Limitations
+In this work, we presentByz-Clip21-SGD2M, a new algorithm that admits provable convergence
+under standardL-smoothness andσ-sub-Gaussian gradient noise in the simultaneous presence of
+DP and Byzantine adversaries. Several directions merit further study:(i)establishing lower bounds
+without the bounded-gradient assumption of Allouah et al. [2023b];(ii)tightening our convergence
+guarantees to match known lower bounds exactly when DP and Byzantine adversaries are consid-
+ered separately;(iii)extending the analysis ofByz-Clip21-SGD2Mto heavy-tailed gradient noise
+and relaxed smoothness assumptions [Zhang et al., 2020a, Alimisis et al., 2025];(iv)strengthening
+the privacy guarantees via amplification by data and client subsampling.
+11
+8 Acknowledgment
+The research reported in this publication was supported by funding from King Abdullah University
+of Science and Technology (KAUST): i) KAUST Baseline Research Scheme, ii) CRG Grant ORFS-
+CRG12-2024-6460, and iii) Center of Excellence for Generative AI, under award number 5940.
+References
+Regulation (eu) 2016/679 of the european parliament and of the council of 27 april 2016 on the
+protection of natural persons with regard to the processing of personal data and on the free
+movement of such data, and repealing directive 95/46/ec (general data protection regulation).
+Official Journal of the European Union, L119, 1–88, 2016. URLhttps://eur-lex.europa.eu/
+eli/reg/2016/679/oj.(Cited on page 1)
+Directive (eu) 2022/2555 of the european parliament and of the council of 14 december 2022 on
+measures for a high common level of cybersecurity across the union (nis2 directive). Official
+Journal of the European Union, L 333, 27 December 2022, pp. 80–152, 2022. URLhttps:
+//eur-lex.europa.eu/eli/dir/2022/2555/oj.(Cited on page 1)
+Regulation (eu) 2024/2847 of the european parliament and of the council of 13 march 2024 on
+horizontal cybersecurity requirements for products with digital elements (cyber resilience act).
+Official Journal of the European Union, L 2847, 8 October 2024, 2024. URLhttps://eur-lex.
+europa.eu/eli/reg/2024/2847/oj.(Cited on page 1)
+Regulation (eu) 2024/1689 of the european parliament and of the council of 13 june 2024 laying
+down harmonised rules on artificial intelligence (artificial intelligence act). Official Journal of the
+European Union, L1689, 2024. URLhttps://eur-lex.europa.eu/eli/reg/2024/1689/oj.
+(Cited on page 1)
+Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov, Kunal Talwar,
+and Li Zhang. Deep learning with differential privacy. InProceedings of the 2016 ACM SIGSAC
+conference on computer and communications security, 2016.(Cited on pages 4 and 69)
+Ahmad Ajalloeian and Sebastian U Stich. On the convergence of sgd with biased gradients.arXiv
+preprint arXiv:2008.00051, 2020.(Cited on page 2)
+Foivos Alimisis, Rustem Islamov, and Aurelien Lucchi. Why do we need warm-up? a theoretical
+perspective.arXiv preprint arXiv:2510.03164, 2025.(Cited on page 11)
+Dan Alistarh, Demjan Grubic, Jerry Li, Ryota Tomioka, and Milan Vojnovic. Qsgd:
+Communication-efficient sgd via gradient quantization and encoding.Advances in neural in-
+formation processing systems, 30, 2017.(Cited on page 2)
+Dan Alistarh, Zeyuan Allen-Zhu, and Jerry Li. Byzantine stochastic gradient descent. InAdvances
+in Neural Information Processing Systems (NeurIPS), 2018.(Cited on page 3)
+Zeyuan Allen-Zhu, Faeze Ebrahimian, Jerry Li, and Dan Alistarh. Byzantine-resilient non-convex
+stochastic gradient descent.arXiv preprint arXiv:2012.14368, 2020.(Cited on page 3)
+Youssef Allouah, Sadegh Farhadkhani, Rachid Guerraoui, Nirupam Gupta, Rafaël Pinot, and John
+Stephan. Fixing by mixing: A recipe for optimal byzantine ml under heterogeneity. InInterna-
+tional Conference on Artificial Intelligence and Statistics, 2023a.(Cited on pages 3, 5, and 68)
+Youssef Allouah, Rachid Guerraoui, Nirupam Gupta, Rafaël Pinot, and John Stephan. On the
+privacy-robustness-utility trilemma in distributed learning. InInternational Conference on Ma-
+chine Learning, 2023b.(Cited on pages 2, 3, 4, 6, 9, 11, and 68)
+12
+Youssef Allouah, Rachid Guerraoui, Nirupam Gupta, Ahmed Jellouli, Geovani Rizk, and
+John Stephan. Adaptive gradient clipping for robust federated learning.arXiv preprint
+arXiv:2405.14432, 2024a.(Cited on page 3)
+Youssef Allouah, Anastasia Koloskova, Aymane El Firdoussi, Martin Jaggi, and Rachid Guerraoui.
+The privacy power of correlated noise in decentralized learning.arXiv preprint arXiv:2405.01031,
+2024b.(Cited on pages 4 and 10)
+Yossi Arjevani, Yair Carmon, John C Duchi, Dylan J Foster, Nathan Srebro, and Blake Woodworth.
+Lower bounds for non-convex stochastic optimization.Mathematical Programming, 2023.(Cited
+on page 10)
+RaefBassily, CristóbalGuzmán, andMichaelMenart. Differentiallyprivatestochasticoptimization:
+New results in convex and non-convex settings.Advances in Neural Information Processing
+Systems, 2021.(Cited on page 8)
+Jeremy Bernstein, Yu-Xiang Wang, Kamyar Azizzadenesheli, and Animashree Anandkumar.
+signsgd: Compressed optimisation for non-convex problems. InInternational conference on
+machine learning, pages 560–569. PMLR, 2018.(Cited on page 2)
+Aleksandr Beznosikov, Samuel Horváth, Peter Richtárik, and Mher Safaryan. On biased compres-
+sion for distributed learning.Journal of Machine Learning Research, 24(276):1–50, 2023.(Cited
+on page 2)
+Peva Blanchard, El Mahdi El Mhamdi, Rachid Guerraoui, and Julien Stainer. Machine learning
+with adversaries: Byzantine tolerant gradient descent.Advances in neural information processing
+systems, 2017.(Cited on pages 1 and 2)
+Keith Bonawitz, Vladimir Ivanov, Ben Kreuter, Antonio Marcedone, H Brendan McMahan, Sarvar
+Patel, Daniel Ramage, Aaron Segal, and Karn Seth. Practical secure aggregation for privacy-
+preserving machine learning. Inproceedings of the 2017 ACM SIGSAC Conference on Computer
+and Communications Security, 2017.(Cited on page 4)
+Yair Carmon, John C Duchi, Oliver Hinder, and Aaron Sidford. Lower bounds for finding stationary
+points i.Mathematical Programming, 2020.(Cited on page 5)
+Zachary Charles, Arun Ganesh, Ryan McKenna, H Brendan McMahan, Nicole Mitchell, Krishna
+Pillutla, and Keith Rush. Fine-tuning large language models with user-level differential privacy.
+arXiv preprint arXiv:2407.07737, 2024.(Cited on page 10)
+Kamalika Chaudhuri, Chuan Guo, and Mike Rabbat. Privacy-aware compression for federated data
+analysis. InUncertainty in Artificial Intelligence, 2022.(Cited on page 4)
+Lingjiao Chen, Hongyi Wang, Zachary Charles, and Dimitris Papailiopoulos. Draco: Byzantine-
+resilient distributed training via redundant gradients. InInternational Conference on Machine
+Learning, 2018.(Cited on page 3)
+Yudong Chen, Lili Su, and Jiaming Xu. Distributed statistical machine learning in adversarial
+settings: Byzantine gradient descent.Proceedings of the ACM on Measurement and Analysis of
+Computing Systems, 2017.(Cited on pages 3 and 68)
+Lynn Chua, Badih Ghazi, Yangsibo Huang, Pritish Kamath, Ravi Kumar, Daogao Liu, Pasin
+Manurangsi, Amer Sinha, and Chiyuan Zhang. Mind the privacy unit! user-level differential
+privacy for language model fine-tuning.arXiv preprint arXiv:2406.14322, 2024.(Cited on page 10)
+Enea Monzio Compagnoni, Alessandro Stanghellini, Rustem Islamov, Aurelien Lucchi, and Anas-
+tasiia Koloskova. Adaptive methods are preferable in high privacy settings: An sde perspective.
+arXiv preprint arXiv:2603.03226, 2026.(Cited on page 4)
+13
+Georgios Damaskinos, El Mahdi El Mhamdi, Rachid Guerraoui, Arsany Guirguis, and Sébastien
+Rouault. Aggregathor: Byzantine machine learning via robust gradient aggregation. InProceed-
+ings of Machine Learning and Systems (MLSys), 2019.(Cited on page 3)
+Yury Demidovich, Grigory Malinovsky, Igor Sokolov, and Peter Richtárik. A guide through the zoo
+of biased sgd.Advances in Neural Information Processing Systems, 36:23158–23171, 2023.(Cited
+on page 2)
+John C Duchi, Michael I Jordan, and Martin J Wainwright. Minimax optimal procedures for locally
+private estimation.Journal of the American Statistical Association, 2018.(Cited on page 10)
+Cynthia Dwork, Aaron Roth, et al. The algorithmic foundations of differential privacy.Foundations
+and Trends®in Theoretical Computer Science, 2014.(Cited on pages 5, 7, 9, and 55)
+Úlfar Erlingsson, Vitaly Feldman, Ilya Mironov, Ananth Raghunathan, Kunal Talwar, and
+Abhradeep Thakurta. Amplification by shuffling: From local to central differential privacy via
+anonymity. InProceedings of the Thirtieth Annual ACM-SIAM Symposium on Discrete Algo-
+rithms, 2019.(Cited on page 4)
+Cong Fang, Zhouchen Lin, and Tong Zhang. Sharp analysis for nonconvex sgd escaping from saddle
+points. InConference on Learning Theory, 2019.(Cited on page 8)
+Sadegh Farhadkhani, Rachid Guerraoui, Nirupam Gupta, Rafael Pinot, and John Stephan. Byzan-
+tine machine learning made easy by resilient averaging of momentums. InInternational Confer-
+ence on Machine Learning, 2022.(Cited on page 5)
+Ilyas Fatkhullin, Alexander Tyurin, and Peter Richtárik. Momentum provably improves error
+feedback!Advances in Neural Information Processing Systems, 2024.(Cited on pages 2 and 6)
+Ilyas Fatkhullin, Igor Sokolov, Eduard Gorbunov, Zhize Li, and Peter Richtárik. Ef21 with bells
+& whistles: Six algorithmic extensions of modern error feedback.Journal of Machine Learning
+Research, 26(189):1–50, 2025.(Cited on page 2)
+Xinwen Gao, Shaojing Fu, Lin Liu, and Yuchuan Luo. Bvdfed: Byzantine-resilient and verifiable
+aggregation for differentially private federated learning.Frontiers of Computer Science, 2024.
+(Cited on page 4)
+Yuan Gao, Rustem Islamov, and Sebastian U Stich. Econtrol: Fast distributed optimization with
+compression and error control.arXiv preprint arXiv:2311.05645, 2023.(Cited on page 2)
+Yuan Gao, Anton Rodomanov, Jeremy Rack, and Sebastian Stich. Composite optimization with
+error feedback: the dual averaging approach.arXiv preprint arXiv:2510.03507, 2025a.(Cited on
+page 3)
+Yuan Gao, Anton Rodomanov, Jeremy Rack, and Sebastian U Stich. Accelerated distributed
+optimization with compression and error feedback.arXiv preprint arXiv:2503.08427, 2025b.
+(Cited on page 2)
+Jonas Geiping, Hartmut Bauermeister, Hannah Dröge, and Michael Moeller. Inverting gradients
+— how easy is it to break privacy in federated learning? InAdvances in Neural Information
+Processing Systems, 2020.(Cited on page 1)
+Saeed Ghadimi and Guanghui Lan. Optimal stochastic approximation algorithms for strongly
+convex stochastic composite optimization i: A generic algorithmic framework.SIAM Journal on
+Optimization, 2012.(Cited on page 6)
+Saeed Ghadimi and Guanghui Lan. Stochastic first- and zeroth-order methods for nonconvex
+stochastic programming.SIAM Journal on Optimization, 2013.(Cited on page 5)
+14
+Eduard Gorbunov, Darina Dvinskikh, and Alexander Gasnikov. Optimal decentralized distributed
+algorithms for stochastic convex optimization.arXiv preprint arXiv:1911.07363, 2019.(Cited on
+page 21)
+Eduard Gorbunov, Dmitry Kovalev, Dmitry Makarenko, and Peter Richtárik. Linearly converging
+error compensated sgd.Advances in Neural Information Processing Systems, 33:20889–20900,
+2020.(Cited on page 2)
+Eduard Gorbunov, Alexander Borzunov, Michael Diskin, and Max Ryabinin. Secure distributed
+training at scale. InInternational Conference on Machine Learning, 2022a.(Cited on page 3)
+Eduard Gorbunov, Samuel Horváth, Peter Richtárik, and Gauthier Gidel. Variance reduction is
+an antidote to byzantines: Better rates, weaker assumptions and communication compression as
+a cherry on the top.arXiv preprint arXiv:2206.00529, 2022b.(Cited on pages 3, 5, 6, and 68)
+Xiaolan Gu, Ming Li, and Li Xiong.{DP-BREM}:{Differentially-Private}and{Byzantine-Robust}
+federated learning with client momentum. In34th USENIX Security Symposium (USENIX Se-
+curity 25), 2025.(Cited on pages 3 and 4)
+Rachid Guerraoui, Nirupam Gupta, Rafael Pinot, Sebastien Rouault, and John Stephan.
+Combining differential privacy and byzantine resilience in distributed sgd.arXiv preprint
+arXiv:2110.03991, 2021a.(Cited on page 4)
+Rachid Guerraoui, Nirupam Gupta, Rafaël Pinot, Sébastien Rouault, and John Stephan. Differen-
+tial privacy and byzantine resilience in sgd: Do they add up?arXiv preprint arXiv:2102.08166,
+2021b.(Cited on pages 2 and 4)
+Lie He, Sai Praneeth Karimireddy, and Martin Jaggi. Byzantine-robust decentralized learning via
+clippedgossip.arXiv preprint arXiv:2202.01545, 2022.(Cited on page 3)
+Mahmoud Hegazy, Rémi Leluc, Cheuk Ting Li, and Aymeric Dieuleveut. Compression with exact
+error distribution for federated learning.arXiv preprint arXiv:2310.20682, 2023.(Cited on page 4)
+Samuel Horváth and Peter Richtárik. A better alternative to error feedback for communication-
+efficient distributed learning.arXiv preprint arXiv:2006.11077, 2020.(Cited on page 68)
+Xinmeng Huang, Ping Li, and Xiaoyun Li. Stochastic controlled averaging for federated learning
+with communication compression.arXiv preprint arXiv:2308.08165, 2023.(Cited on page 3)
+Rustem Islamov, Xun Qian, Slavomír Hanzely, Mher Safaryan, and Peter Richtárik. Distributed
+newton-type methods with communication compression and bernoulli aggregation.Transactions
+on Machine Learning Research, 2023.(Cited on page 3)
+Rustem Islamov, Yuan Gao, and Sebastian U Stich. Towards faster decentralized stochastic op-
+timization with communication compression.arXiv preprint arXiv:2405.20114, 2024.(Cited on
+page 3)
+Rustem Islamov, Yarden As, and Ilyas Fatkhullin. Safe-ef: Error feedback for nonsmooth con-
+strained optimization.arXiv preprint arXiv:2505.06053, 2025a.(Cited on page 3)
+Rustem Islamov, Samuel Horváth, Aurelien Lucchi, Peter Richtárik, and Eduard Gorbunov. Double
+momentum and error feedback for clipping with fast rates and differential privacy.arXiv preprint
+arXiv:2502.11682, 2025b.(Cited on pages 2, 3, 4, 6, 10, 22, 23, 32, and 59)
+Sai Praneeth Karimireddy, Lie He, and Martin Jaggi. Byzantine-robust learning on heterogeneous
+datasets via bucketing.arXiv preprint arXiv:2006.09365, 2020.(Cited on pages 3, 5, 11, and 57)
+Sai Praneeth Karimireddy, Lie He, and Martin Jaggi. Learning from history for byzantine robust
+optimization. InProceedings of the 38th International Conference on Machine Learning (ICML),
+2021.(Cited on pages 3 and 5)
+15
+Shiva Prasad Kasiviswanathan, Homin K Lee, Kobbi Nissim, Sofya Raskhodnikova, and Adam
+Smith. What can we learn privately?SIAM Journal on Computing, 2011.(Cited on page 4)
+Saleh Vatan Khah, Savelii Chezhegov, Shahrokh Farahmand, Samuel Horváth, and Eduard Gor-
+bunov. Differentially private clipped-sgd: High-probability convergence with arbitrary clipping
+level.arXiv preprint arXiv:2507.23512, 2025.(Cited on page 4)
+Sarit Khirirat, Eduard Gorbunov, Samuel Horváth, Rustem Islamov, Fakhri Karray, and Peter
+Richtárik. Clip21: Error feedback for gradient clipping.arXiv preprint arXiv:2305.18929, 2023.
+(Cited on page 21)
+Anastasia Koloskova, Tao Lin, Sebastian U Stich, and Martin Jaggi. Decentralized deep learning
+with arbitrary communication compression.arXiv preprint arXiv:1907.09356, 2019.(Cited on
+page 2)
+Anastasia Koloskova, Hadrien Hendrikx, and Sebastian U Stich. Revisiting gradient clipping:
+Stochastic bias and tight convergence guarantees. InInternational Conference on Machine Learn-
+ing, 2023.(Cited on page 4)
+Jakub Konečn` y, H Brendan McMahan, Felix X Yu, Peter Richtárik, Ananda Theertha Suresh,
+and Dave Bacon. Federated learning: Strategies for improving communication efficiency.arXiv
+preprint arXiv:1610.05492, 2016.(Cited on page 1)
+Alex Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University
+of Toronto, 2009.(Cited on page 70)
+Muhang Lan, Song Xiao, and Wenyi Zhang. One-bit model aggregation for differentially private
+and byzantine-robust personalized federated learning.arXiv preprint arXiv:2507.03973, 2025.
+(Cited on page 4)
+Yann LeCun, Corinna Cortes, and C. J. C. Burges. Mnist handwritten digit database.ATT Labs
+[Online]. Available:http: // yann. lecun. com/ exdb/ mnist, 2010.(Cited on page 11)
+Tian Li, Anit Kumar Sahu, Ameet Talwalkar, and Virginia Smith. Federated learning: Challenges,
+methods, and future directions.IEEE signal processing magazine, 2020.(Cited on pages 1 and 4)
+ZhizeLi, HaoyuZhao, BoyueLi, andYuejieChi. Soteriafl: Aunifiedframeworkforprivatefederated
+learning with communication compression.Advances in Neural Information Processing Systems,
+2022.(Cited on page 2)
+Mingrui Liu, Zhenxun Zhuang, Yunwen Lei, and Chunyang Liao. A communication-efficient dis-
+tributed gradient clipping algorithm for training deep neural networks.Advances in Neural
+Information Processing Systems, 2022.(Cited on pages 3 and 10)
+Zijian Liu, Ta Duy Nguyen, Thien Hang Nguyen, Alina Ene, and Huy Nguyen. High probability
+convergence of stochastic gradient methods. InInternational Conference on Machine Learning,
+2023.(Cited on page 6)
+Andrew Lowy, Ali Ghafelebashi, and Meisam Razaviyayn. Private non-convex federated learning
+without a trusted server. InInternational Conference on Artificial Intelligence and Statistics,
+2023.(Cited on pages 2 and 4)
+Lingjuan Lyu, Han Yu, Xingjun Ma, Chen Chen, Lichao Sun, Jun Zhao, Qiang Yang, and Philip S
+Yu. Privacy and robustness in federated learning: Attacks and defenses.IEEE Transactions on
+Neural Networks and Learning Systems, 2022.(Cited on page 2)
+Maksim Makarenko, Elnur Gasanov, Rustem Islamov, Abdurakhmon Sadiev, and Peter
+Richtárik. Adaptive compression for communication-efficient distributed training.arXiv preprint
+arXiv:2211.00188, 2022.(Cited on page 2)
+16
+Grigory Malinovsky, Peter Richtárik, Samuel Horváth, and Eduard Gorbunov. Byzantine robust-
+ness and partial participation can be achieved at once: Just clip gradient differences.Advances
+in Neural Information Processing Systems, 2024.(Cited on pages 3 and 5)
+Brendan McMahan, Eider Moore, Daniel Ramage, Seth Hampson, and Blaise Aguera y Arcas.
+Communication-efficient learning of deep networks from decentralized data. InArtificial intelli-
+gence and statistics, 2017a.(Cited on page 1)
+H Brendan McMahan, Daniel Ramage, Kunal Talwar, and Li Zhang. Learning differentially private
+recurrent language models.arXiv preprint arXiv:1710.06963, 2017b.(Cited on page 4)
+El Mahdi El Mhamdi, Rachid Guerraoui, and Sébastien Rouault. The hidden vulnerability of
+distributed learning in byzantium.arXiv preprint arXiv:1802.07927, 2018.(Cited on page 2)
+Tomoya Murata and Taiji Suzuki. DIFF2: Differential private optimization via gradient differ-
+ences for nonconvex distributed learning. InProceedings of the 40th International Conference on
+Machine Learning, 2023.(Cited on page 4)
+Arkadi Nemirovski, Anatoli Juditsky, Guanghui Lan, and Alexander Shapiro. Robust stochastic
+approximation approach to stochastic programming.SIAM Journal on optimization, 2009.(Cited
+on page 6)
+Maxence Noble, Aurélien Bellet, and Aymeric Dieuleveut. Differentially private federated learning
+on heterogeneous data. InInternational conference on artificial intelligence and statistics, 2022.
+(Cited on pages 4 and 10)
+Shreyas Pai, Gopal Pandurangan, Sriram V Pemmaraju, and Peter Robinson. Can we break
+symmetry with o (m) communication? InProceedings of the 2021 ACM Symposium on Principles
+of Distributed Computing, 2021.(Cited on page 5)
+Andrea Paudice, Luis Muñoz-González, and Emil C Lupu. Label sanitization against label flipping
+poisoning attacks. InJoint European conference on machine learning and knowledge discovery
+in databases, 2018.(Cited on page 68)
+Krishna Pillutla, Sham M Kakade, and Zaid Harchaoui. Robust aggregation for federated learning.
+IEEE Transactions on Signal Processing, 2022.(Cited on pages 3 and 5)
+Xun Qian, Rustem Islamov, Mher Safaryan, and Peter Richtárik. Basis matters: bet-
+ter communication-efficient second order methods for federated learning.arXiv preprint
+arXiv:2111.01847, 2021.(Cited on page 3)
+Shashank Rajput, Hongyi Wang, Zachary Charles, and Dimitris Papailiopoulos. Detox: A
+redundancy-based framework for faster and more robust gradient aggregation.Advances in
+neural information processing systems, 2019.(Cited on page 3)
+Ahmad Rammal, Kaja Gruntkowska, Nikita Fedin, Eduard Gorbunov, and Peter Richtárik. Com-
+munication compression for byzantine robust learning: New efficient algorithms and improved
+rates. InProceedings of the 27th International Conference on Artificial Intelligence and Statistics
+(AISTATS), 2024.(Cited on page 3)
+Jayanth Regatti, Hao Chen, and Abhishek Gupta. Bygars: Byzantine sgd with arbitrary number
+of attackers.arXiv preprint arXiv:2006.13421, 2020.(Cited on page 3)
+Peter Richtárik, Igor Sokolov, and Ilyas Fatkhullin. Ef21: A new, simpler, theoretically better,
+and practically faster error feedback.Advances in Neural Information Processing Systems, 34:
+4384–4396, 2021.(Cited on page 2)
+Nuria Rodrıguez-Barroso, Eugenio Martınez-Cámara, M Luzón, Gerardo González Seco,
+Miguel Ángel Veganzones, and Francisco Herrera. Dynamic federated learning model for identi-
+fying adversarial clients.arXiv preprint arXiv:2007.15030, 2020.(Cited on page 3)
+17
+AbdurakhmonSadiev, MarinaDanilova, EduardGorbunov, SamuelHorváth, GauthierGidel, Pavel
+Dvurechensky, Alexander Gasnikov, and Peter Richtárik. High-probability bounds for stochastic
+optimization and variational inequalities: the case of unbounded variance. InInternational
+Conference on Machine Learning, 2023.(Cited on page 8)
+Mher Safaryan, Rustem Islamov, Xun Qian, and Peter Richtárik. Fednl: Making newton-type
+methods applicable to federated learning.arXiv preprint arXiv:2106.02969, 2021.(Cited on
+page 3)
+Frank Seide, Hao Fu, Jasha Droppo, Gang Li, and Dong Yu. 1-bit stochastic gradient descent and
+its application to data-parallel distributed training of speech dnns. InInterspeech, volume 2014,
+pages 1058–1062. Singapore, 2014.(Cited on page 2)
+Reza Shokri, Marco Stronati, Congzheng Song, and Vitaly Shmatikov. Membership inference
+attacks against machine learning models. In2017 IEEE symposium on security and privacy
+(SP), 2017.(Cited on page 1)
+Egor Shulgin, Sarit Khirirat, and Peter Richtárik. Smoothed normalization for efficient distributed
+private optimization.arXiv preprint arXiv:2502.13482, 2025a.(Cited on pages 3 and 4)
+EgorShulgin, GrigoryMalinovsky, SaritKhirirat, andPeterRichtárik. Firstprovableguaranteesfor
+practical private fl: Beyond restrictive assumptions.Tiny Titans: The Next Wave of On-Device
+Learning for Foundational Models (ICML workshop), 2025b.(Cited on pages 2 and 4)
+Sebastian U Stich and Sai Praneeth Karimireddy. The error-feedback framework: Better rates for
+sgd with delayed gradients and compressed communication.arXiv preprint arXiv:1909.05350,
+2019.(Cited on page 2)
+Sebastian U Stich, Jean-Baptiste Cordonnier, and Martin Jaggi. Sparsified sgd with memory.
+Advances in neural information processing systems, 31, 2018.(Cited on page 2)
+Elham Tabassi et al. Artificial intelligence risk management framework (ai rmf 1.0). Technical
+report, National Institute of Standards and Technology, 2023. URLhttps://doi.org/10.6028/
+NIST.AI.100-1.(Cited on page 1)
+Florian Tramèr, FanZhang, Ari Juels, MichaelK. Reiter, andThomas Ristenpart. Stealingmachine
+learning models via prediction APIs. InUSENIX Security Symposium, 2016.(Cited on page 1)
+Lingxiao Wang, Bargav Jayaraman, David Evans, and Quanquan Gu. Efficient privacy-preserving
+stochastic nonconvex optimization. InUncertainty in Artificial Intelligence, 2023.(Cited on pages 2
+and 4)
+Lingxiao Wang, Xingyu Zhou, Kumar Kshitij Patel, Lawrence Tang, and Aadirupa Saha. Effi-
+cient private federated non-convex optimization with shuffled model. InPrivacy Regulation and
+Protection in Machine Learning, 2024.(Cited on page 4)
+Jianqiao Wangni, Jialei Wang, Ji Liu, and Tong Zhang. Gradient sparsification for communication-
+efficient distributed optimization.Advances in Neural Information Processing Systems, 31, 2018.
+(Cited on page 2)
+Zhaoxian Wu, Qing Ling, Tianyi Chen, and Georgios B Giannakis. Federated variance-reduced
+stochastic gradient descent with robustness to byzantine attacks.IEEE Transactions on Signal
+Processing, 2020.(Cited on pages 3 and 6)
+Zihang Xiang, Tianhao Wang, Wanyu Lin, and Di Wang. Practical differentially private and
+byzantine-resilient federated learning.Proceedings of the ACM on Management of Data, 2023.
+(Cited on pages 2, 3, 4, and 9)
+18
+Cong Xie, Sanmi Koyejo, and Indranil Gupta. Zeno: Distributed stochastic gradient descent with
+suspicion-based fault-tolerance. InInternational conference on machine learning, 2019.(Cited on
+page 11)
+Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta. Fall of empires: Breaking byzantine-tolerant
+sgd by inner product manipulation. InUncertainty in artificial intelligence, 2020.(Cited on page 11)
+Xinyi Xu and Lingjuan Lyu. A reputation mechanism is all you need: Collaborative fairness and
+adversarial robustness in federated learning.arXiv preprint arXiv:2011.10464, 2020.(Cited on
+page 3)
+Qiang Yang, Yang Liu, Tianjian Chen, and Yongxin Tong. Federated machine learning: Concept
+and applications.ACM Transactions on Intelligent Systems and Technology (TIST), 2019.(Cited
+on page 1)
+Chung-YiuYauandHoi-ToWai. Docom: Compresseddecentralizedoptimizationwithnear-optimal
+sample complexity.arXiv preprint arXiv:2202.00255, 2022.(Cited on page 3)
+Dong Yin, Yudong Chen, Ramchandran Kannan, and Peter Bartlett. Byzantine-robust distributed
+learning: Towards optimal statistical rates. InInternational conference on machine learning,
+2018.(Cited on pages 3 and 5)
+Bohang Zhang, Jikai Jin, Cong Fang, and Liwei Wang. Improved analysis of clipping algorithms for
+non-convex optimization.Advances in Neural Information Processing Systems, 33:15511–15521,
+2020a.(Cited on page 11)
+Meifan Zhang, Zhanhong Xie, and Lihua Yin. Private and communication-efficient federated learn-
+ing based on differentially private sketches.arXiv preprint arXiv:2410.05733, 2024.(Cited on
+page 4)
+Xin Zhang, Minghong Fang, Jia Liu, and Zhengyuan Zhu. Private and communication-efficient
+edge learning: A sparse differential gaussian-masking distributed sgd approach. InProceedings
+of the Twenty-First International Symposium on Theory, Algorithmic Foundations, and Protocol
+Design for Mobile Networks and Mobile Computing, 2020b.(Cited on page 4)
+Zikai Zhang and Rui Hu. Byzantine-robust federated learning with variance reduction and differen-
+tial privacy. In2023 IEEE Conference on Communications and Network Security (CNS), 2023.
+(Cited on page 2)
+Puning Zhao, Jiafei Wu, Zhe Liu, Chong Wang, Rongfei Fan, and Qingming Li. Differential private
+stochastic optimization with heavy-tailed data: Towards optimal rates. InProceedings of the
+AAAI Conference on Artificial Intelligence, 2025.(Cited on page 4)
+Heng Zhu and Qing Ling. Bridging differential privacy and byzantine-robustness via model aggre-
+gation.arXiv preprint arXiv:2205.00107, 2022.(Cited on page 9)
+Ligeng Zhu, Zhijian Liu, and Song Han. Deep leakage from gradients.Advances in neural infor-
+mation processing systems, 2019.(Cited on page 1)
+19
+Appendix
+Contents
+A Notation 20
+B Useful Lemmas 21
+C Descent Lemmas 22
+D Proof of Theorem 5.1 33
+E Proofs in Special Cases 55
+E.1 Convergence in the Absence of Both DP and Byzantine Adversaries . . . . . . . . . 55
+E.2 Convergence in the Absence of Byzantine Adversaries . . . . . . . . . . . . . . . . . 56
+E.3 Convergence in the Absence of DP Adversaries . . . . . . . . . . . . . . . . . . . . . 57
+F Additional Experiments and Training Details 68
+F.1 Training Details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 68
+F.2 Label Flipping Attack . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 68
+F.3 Amplification by Sub-sampling . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 69
+A Notation
+In our analysis, we make use of the following quantities
+vt := 1
+G
+∑
+i∈G
+vt
+i, gt := 1
+G
+∑
+i∈G
+gt
+i, mt := 1
+G
+∑
+i∈G
+mt
+i,Ω t
+i :=
+t∑
+l=1
+ωl
+i, Ωt := 1
+G
+∑
+i∈G
+Ωt
+i,
+θt := 1
+G
+∑
+i∈G
+θt
+i∇f(xt,ξt) := 1
+G
+∑
+i∈G
+∇fi(xt,ξt
+i).(10)
+Next, we derive the relation betweenmt and gt of the form
+mt =gt + ˆβΩt (11)
+Indeed, we have m0 = g0 by initialization of Algorithm 1. Assume that the relation holds at
+iterationt, let us show that it also holds at iterationt+ 1 :
+mt+1 =mt +
+ˆβ
+G
+∑
+i∈G
+[clipτ(vt+1
+i −g t
+i) +ωt+1
+i ]
+Ind. Asmp.= gt + ˆβΩt +
+ˆβ
+G
+∑
+i∈G
+clipτ(vt+1
+i −g t
+i) +
+ˆβ
+G
+∑
+i∈G
+ωt+1
+i
+(10)= 1
+G
+∑
+i∈G
+[gt
+i + ˆβclipτ(vt+1
+i −g t
+i)] +
+ˆβ
+G
+∑
+i∈G
+[Ωt
+i +ω t+1
+i ]
+= 1
+G
+∑
+i∈G
+gt+1
+i +
+ˆβ
+G
+∑
+i∈G
+Ωt+1
+i
+=gt+1 + ˆβΩt+1.(12)
+Similarly, we obtain
+mt
+i =g t
+i + ˆβΩt
+i.(13)
+20
+Table A.1:Summary of notation used in the paper, including convergence proofs.
+Symbol Definition Meaning Reference
+n– Number of all clients Section 3
+x– Model parameters Section 3
+d– Number of model parameters Section 3
+G– Set of regular clients Section 3
+G– Number of regular clients Section 3
+B– Set of Byzantine clients Section 3
+δbyz – Fraction of Byzantine clients Section 3
+ε,δ– Privacy budget constants Definition 3.1
+τ– Clipping threshold Equation (8)
+c– Scaling constant in aggregation rule Definition 3.2
+L– Smoothness constant Assumption 3.1
+Aζ,ζ2 1G
+∑
+i∈G∥∇fi(x)−∇f(x)∥2≤Aζ∥∇f(x)∥2+ζ2ormaxi∈G∥∇fi(x)−∇f(x)∥2≤Aζ∥∇f(x)∥2+ζ2 Heterogeneity bound Assumption 3.3 orAssumption 3.3a
+f⋆ f⋆:= infx∈Rdf(x)>−∞Lower bound on the function value Assumption 3.1
+T– Number of iterations –
+∇fi(xt,ξti)– Stochastic gradient at iterationtof clienti∈GAssumption 3.2
+∇f(xt,ξt)∇f(x t,ξt):=1G
+∑
+i∈G∇fi(xt,ξti) Averaged stochastic gradient at iterationtof all regular clients Equation (10)
+vt vt:=1G
+∑
+i∈Gvti Averaged client momentum buffer Equation (10)
+gt gt:=1G
+∑
+i∈Ggti AveragedEF21learnable shifted vector Equation (10)
+mt mt:=1G
+∑
+i∈Gmti Averaged server momentum buffer Equation (10)
+ωti – DP noise added by clienti∈Gat iterationt Algorithm 1
+Ωti Ωti:=∑tl=1ωli, Ωt:=1G
+∑
+i∈GΩti Accumulated DP noise of clienti∈GEquation (10)
+Ωt Ωt:=1G
+∑
+i∈GΩti Averaged accumulated DP noiseof all regular clients Equation (10)
+θti θti :=∇fi(xt,ξti)−∇fi(xt) Mini-batch noise at iterationtof regular clienti∈G Assumption 3.2
+θt θt:=1G
+∑
+i∈Gθti Averaged mini-batch noiseof all regular clients Equation (10)
+Φt – Lyapunov function Equation (9)
+˜Φt – Lyapunov function in the absenceof DP adversaries Equation (95)
+α– Failure probability Theorem 5.1
+∆ ∆≥Φ 0 Upper bound on the Lyapunov functionat initialization Lemma 4
+Binit Binit:= max{3τ,maxi{∥∇fi(x0)∥}+b}Sub-optimality of initialization Theorem D.1
+a a :=
+(√2 + 2
+√
+3 log8(T+1)α
+)√dσω
+√TG High-probability bound onΩt Equation (67)
+ˆaˆa :=
+(√2 + 2
+√
+3 log8(T+1)α
+)√dσω
+√THigh-probability bound onΩ ti Equation (67)
+b2 b2:= 2σ2log16(T+1)Gα High-probability bound on∥θti∥Equation (67)
+ˆc2 ˆc2:=
+(√2 + 2
+√
+3 log8(T+1)α
+)2
+σ2 High-probability bound on∥θt∥Equation (67)
+˜b2 ˜b2:= 2σ2log(6(T+1)Gα
+) High-probability bound on∥θti∥(in the absence of DP adversaries)Equation (96)
+˜c2 ˜c2:=
+(√2 + 2
+√
+3 log8(T+1)α
+)
+σ2 High-probability bound on∥θt∥(in the absence of DP adversaries)Equation (96)
+˜z2 ˜z2:=
+(√2 + 2
+√
+3 log8G(T+1)α
+)
+σ2 High-probability bound on∥∑tk=0(1−β)t−k(θt−θti)∥(in the absence of DP adversaries)Equation (96)
+B Useful Lemmas
+First, we start with a key property of the clipping operator.
+Lemma 1(Lemma 4.1 in [Khirirat et al., 2023]).The clipping operator satisfies for anyx∈Rd
+∥clipτ(x)−x∥≤max{∥x∥−τ,0}.(14)
+Next, in our high probability analysis, we make use of the following concentration inequality.
+Lemma 2(Lemma C.3 in [Gorbunov et al., 2019]).Let{ξk}N
+k=1 be the sequence of random vectors
+with values inRn such that
+E[ξk|ξ k−1,...,ξ 1] = 0almost surely,∀k∈{1,...,N},
+and setSN :=∑N
+k=1ξk. Assume that the sequence{ξk}N
+k=1 are sub-Gaussian, i.e.
+E[exp (∥ξk∥2
+/σ2
+k|ξ k−1,...,ξ 1)]≤exp(1)almost surely,∀k∈{1,...,N},
+whereσ 2,...,σ N are some positive numbers. Then for allγ≥0
+P
+
+∥SN∥≥(
+√
+2 + 2γ)
+√
+N∑
+k=1
+σ2
+k
+
+≤exp(− γ2
+/3).(15)
+21
+C Descent Lemmas
+Lemma 3.LetfbeL-smooth,F t :=f(x t)−f ⋆,{x t}be generated by Algorithm 1 withγ≤ 1
+2L.
+Then we have
+f(xt+1)≤f(x t)− γ
+2∥∇f(xt)∥2− 1
+4γ∥xt+1−xt∥2+2γ∥∇f(xt)− vt∥2+2γ
+G
+∑
+i∈G
+∥vt
+i−g t
+i∥2
++ 2γ ˆβ2∥Ωt∥2+16γ ˆβ2cδbyzτ 2T 2 + 16γ ˆβ2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2,
+(16)
+Proof.Using the derivations from [Islamov et al., 2025b], Lemma 2 we first get
+f(xt+1)≤f(x t)− γ
+2∥∇f(xt)∥2−γ
+4∥gt∥2+γ
+2∥∇f(xt)−g t∥2.
+We continue the derivations as follows
+f(xt+1)
+(i)
+≤f(x t)− γ
+2∥∇f(xt)∥2−γ
+4∥gt∥2+2γ∥∇f(xt)− vt∥2+2γ∥vt−gt∥2+2γ∥gt−mt∥2
++ 2γ∥mt−g t∥2
+(ii)
+≤f(x t)− γ
+2∥∇f(xt)∥2− 1
+4γ∥xt+1−xt∥2+2γ∥∇f(xt)− vt∥2+2γ
+G
+∑
+i∈G
+∥vt
+i−g t
+i∥2
++ 2γ ˆβ2∥Ωt∥2+2γ∥mt−g t∥2,(17)
+where(i)follows from Jensen’s inequality applied to∥·∥ 2,(ii)is obtained using again Jensen’s
+inequality applied to∥·∥ 2, the update rule ofxt,and (11). Now we bound the term∥ mt−g t∥2
+using the properties of the aggregator. We have
+∥mt−g t∥2 =
+mt−RAgg(mt
+1,...,m t
+n)
+
+2
+(iii)
+≤ cδbyz
+G
+∑
+i∈G
+mt−mt
+i
+
+2
+(iv)
+≤ cδbyz
+G2
+∑
+j,l∈G
+mt
+j−mt
+l
+
+2
+= cδbyz
+G2
+∑
+j,l∈G,j̸=l
+mt
+j−mt
+l
+
+2
+≤ cδbyz
+G(G−1)
+∑
+j,l∈G,j̸=l
+∥mt
+j−mt
+l∥2
+(v)
+= cδbyz
+G(G−1)
+∑
+j,l∈G,j̸=l
+∥gt
+j + ˆβΩt
+j−g t
+l− ˆβΩt
+l∥2
+(vi)
+≤ 8cδbyz
+G
+∑
+i∈G
+
+ˆβ
+t∑
+s=0
+clipτ(vs
+i−g s−1
+i )
+
+2
++ 8cδbyz ˆβ2
+G
+∑
+i∈G
+∥Ωt
+i∥2
+(vii)
+≤8cδ byz ˆβ2(t+ 1) 2τ 2 + 8cδbyz ˆβ2
+G
+∑
+i∈G
+∥Ωt
+i∥2,(18)
+where(iii)follows from the definition ofRAgg;(iv)– from Young’s inequality,(v)– from (13),
+(vi)– from Young’s inequality and update rule ofgt
+i together with the initializationg0
+i = 0,(vii)
+– from Young’s inequality. Plugging (18) in (17) and noting that(t+ 1)≤T, we get
+f(xt+1)≤f(x t)− γ
+2∥∇f(xt)∥2− 1
+4γ∥xt+1−xt∥2+2γ∥∇f(xt)− vt∥2+2γ
+G
+∑
+i∈G
+∥vt
+i−g t
+i∥2
++ 2γ ˆβ2∥Ωt∥2+16γ ˆβ2cδbyzτ 2T 2 + 16γ ˆβ2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2,(19)
+that finalizes the proof.
+22
+Lemma 4.Let eachf i beL-smooth. Then, for the iterates of Algorithm 1 we have the following
+inequality with probability1
+∥vt+1
+i −g t
+i∥≤(1− ˆβ)∥vt
+i−g t−1
+i ∥+ ˆβmax
+{
+0,∥vt
+i−g t−1
+i ∥−τ
+}
++βLγ∥ mt∥+β∥∇fi(xt)−v t
+i∥
++ 2β ˆβτTLγ
+√
+2cδbyz + 2β ˆβLγ
+√2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2 +β∥θ t+1
+i ∥,
+whereθ t
+i :=∇f i(xt,ξt
+i)−∇f i(xt).
+Proof.First, we follow the steps of the proof of Islamov et al. [2025b, Lemma 12] to derive
+∥vt+1
+i −g t
+i∥≤(1− ˆβ)∥vt
+i−g t−1
+i ∥+ ˆβmax
+{
+0,∥vt
+i−g t−1
+i ∥−τ
+}
++βLγ∥g t∥+β∥∇fi(xt)−v t
+i∥
++β∥θ t+1
+i ∥.(20)
+Next, we continue as follows
+∥vt+1
+i −g t
+i∥≤(1− ˆβ)∥vt
+i−g t−1
+i ∥+ ˆβmax
+{
+0,∥vt
+i−g t−1
+i ∥−τ
+}
++βLγ∥g t−mt∥+βLγ∥mt∥
++β∥∇f i(xt)−v t
+i∥+β∥θt+1
+i ∥.(21)
+Now we perform similar derivations as in Lemma 3 to bound∥gt−mt∥(see (18)), which finally
+gives the bound
+∥vt+1
+i −g t
+i∥≤(1− ˆβ)∥vt
+i−g t−1
+i ∥+ ˆβmax
+{
+0,∥vt
+i−g t−1
+i ∥−τ
+}
++βLγ∥ mt∥+β∥∇fi(xt)−v t
+i∥
++βLγ
+√8cδbyz ˆβ2T 2τ 2 + 8ˆβ2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2 +β∥θ t+1
+i ∥
+(i)
+≤(1− ˆβ)∥vt
+i−g t−1
+i ∥+ ˆβmax
+{
+0,∥vt
+i−g t−1
+i ∥−τ
+}
++βLγ∥ mt∥+β∥∇fi(xt)−v t
+i∥
++ 2β ˆβτTLγ
+√
+2cδbyz + 2β ˆβLγ
+√2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2 +β∥θ t+1
+i ∥,(22)
+where(i)follows from the triangle inequality:√s+q≤ √s+√qfor anys,q≥0.
+Lemma 5.Let eachf i beL-smooth, and∆≥Φ 0.Assume that the following inequalities hold for
+the iterates generated byByz-Clip21-SGD2M
+1.γ≤ 1
+24L,
+2.β∈[0,1], ˆβ∈[0, 1/24],
+3.∥ mt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT,
+4.∥ gt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT;
+5.∥∇f i(xt−1)−v t−1
+i ∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτTfor all
+i∈G;
+6.∥v t
+i−g t−1
+i ∥≤B init for alli∈G;
+7.∥Ω t∥≤a;
+8.∥Ω t−1
+i ∥≤ˆafor alli∈G;
+9.∥θ t
+i∥≤bfor alli∈G;
+10.Φ t−1≤2∆.
+23
+Then we have
+∥mt∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT.(23)
+Proof.We start as follows
+∥mt∥
+(i)
+=
+
+mt−1 +
+ˆβ
+G
+∑
+i∈G
+[clipτ(vt
+i−g t−1
+i ) +ωt
+i]
+
+=
+
+mt−1 +
+ˆβ
+G
+∑
+i∈G
+[
+∇fi(xt) + (vt
+i−∇fi(xt)) + clipτ(vt
+i−g t−1
+i )−(v t
+i−g t−1
+i )
+]
+−
+ˆβ
+G
+∑
+i∈G
+gt−1
+i +
+ˆβ
+G
+∑
+i∈G
+ωt
+i
+
+=
+
+mt−1 +
+ˆβ
+G
+∑
+i∈G
+[
+∇fi(xt) + (vt
+i−∇fi(xt)) + clipτ(vt
+i−g t−1
+i )−(v t
+i−g t−1
+i )
+]
+−gt−1 + (1− ˆβ)gt−1 +
+ˆβ
+G
+∑
+i∈G
+ωt
+i
+
+.
+where(i)follows from the update rule ofmt. We continue the derivations as follows
+∥mt∥
+(ii)
+≤
+
+mt−1−gt−1 +
+ˆβ
+G
+∑
+i∈G
+ωt
+i
+
++ ˆβ∥∇f(xt)∥+
+ˆβ
+G
+∑
+i∈G
+∥clipτ(vt
+i−g t−1
+i )−(v t
+i−g t−1
+i )∥
++ (1− ˆβ)∥gt−1∥+
+ˆβ
+G
+∑
+i∈G
+∥vt
+i−∇fi(xt)∥
+(iii)
+≤
+
+gt−1 + ˆβΩt−1−gt−1 +
+ˆβ
+G
+∑
+i∈G
+ωt
+i
+
++ ˆβ∥∇f(xt−1)∥+ ˆβ∥∇f(xt−1)−∇f(x t)∥
++
+ˆβ
+G
+∑
+i∈G
+∥clipτ(vt
+i−g t−1
+i )−(v t
+i−g t−1
+i )∥+(1− ˆβ)∥gt−1∥
++
+ˆβ
+G
+∑
+i∈G
+∥(1−β)v t−1
+i +β∇f i(xt,ξt
+i)−∇f i(xt)∥,(24)
+where(ii)follows from the triangle inequality,(iii)– from (11), triangle inequality, and update
+rule ofvt
+i. Using the definition ofΩt we continue as follows
+∥mt∥
+(iv)
+≤ ˆβ∥Ωt∥+ ˆβ∥∇f(xt−1)∥+ ˆβLγ∥gt−1∥+
+ˆβ
+G
+∑
+i∈G
+max
+{
+0,∥vt
+i−g t−1
+i ∥−τ
+}
++ (1− ˆβ)∥gt−1∥
++
+ˆβ
+G
+∑
+i∈G
+(
+(1−β)∥v t−1
+i −∇fi(xt)∥+β∥∇fi(xt,ξt
+i)−∇f i(xt)∥
+)
+(v)
+≤ ˆβ∥Ωt∥+ ˆβ
+√
+2L(f(xt−1)−f ⋆) + (2−β) ˆβLγ∥gt−1∥+ ˆβ(Binit−τ) + (1− ˆβ)∥gt−1∥
++
+ˆββ
+G
+∑
+i∈G
+∥θt
+i∥+
+ˆβ
+G(1−β)
+∑
+i∈G
+∥vt−1
+i −∇fi(xt−1)∥
+(vi)
+≤ ˆβ∥Ωt∥+ ˆβ
+√
+2LΦt−1 + 2(2−β) ˆβLγ∥mt−1−g t−1∥+2(2−β) ˆβLγ∥mt−1∥+ ˆβ(Binit−τ)
++ (1− ˆβ)∥gt−1∥+
+ˆββ
+G
+∑
+i∈G
+∥θt
+i∥+
+ˆβ
+G(1−β)
+∑
+i∈G
+∥vt−1
+i −∇fi(xt−1)∥,
+24
+where(iv)follows fromL-smoothness, update rule ofx t,the clipping property from Lemma 1,
+and triangle inequality,(v)– fromL-smoothness, triangle inequality, the update rule ofx t, the
+definition ofθ t
+i, and the assumption5of the lemma,(vi)– from the definition ofΦ t and triangle
+inequality. Now we use (18) and the assumptions of the lemma to derive
+∥mt∥
+(vii)
+≤ ˆβa+ ˆβ
+√
+4L∆ + 4ˆβLγ
+√8cδbyz ˆβ2T 2τ 2 + ˆβ2 8cδbyz
+G
+∑
+i∈G
+∥Ωt−1
+i ∥2
++ 4 ˆβLγ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT
+)
++ ˆβ(Binit−τ)
++ (1− ˆβ)
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT
+)
++ ˆββb
++ ˆβ(1−β)
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)
+(viii)
+≤ ˆβa+ ˆβ
+√
+4L∆ + 8ˆβ2TτLγ
+√
+2cδbyz + 8ˆβ2Lγ
+√
+2cδbyzˆa+ˆβ(Binit−τ) + ˆββb
++ 4 ˆβLγ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT
+)
++ (1− ˆβ)
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT
+)
++ ˆβ(1−β)
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)
+,(25)
+where(vii)follows from assumptions3-5,7,9,10 (viii)– from inequality √s+q≤ √s+√qfor
+anya,b≥0. Rearranging terms, we derive
+∥mt∥≤
+√
+L∆[2 ˆβ+ 32 ˆβLγ+ 8(1− ˆβ) + 2ˆβ(1−β)] + (B init−τ)[12 ˆβLγ+ 3(1− ˆβ) + ˆβ+ 3/2ˆβ(1−β)]
++b[12 ˆβLγ+ 3(1− ˆβ) + ˆββ+ 3/2ˆβ(1−β)] +a[ ˆβ+ 12 ˆβ2Lγ+ ˆβ2(1−β)]
++
+√
+2cδbyzˆa[8ˆβ2Lγ+ 12 ˆβ2Lγ+ 4 ˆβ2(1−β)]
++τT
+√
+2cδbyz[3/2ˆβ2(1−β) + 3 ˆβ(1− ˆβ) + 12ˆβ2Lγ+ 8 ˆβ2Lγ].(26)
+For the first coefficient, we have
+2 ˆβ+ 32 ˆβLγ+ 8(1− ˆβ) + 2ˆβ(1−β)≤8
+⇐2 ˆβ+ 32 ˆβLγ+ 2 ˆβ(1−β)≤8 ˆβ
+⇐8Lγ≤1,(27)
+where the last inequality is satisfied by the choice of the step-sizeγ≤1
+24L.For the second coefficient,
+we have
+12 ˆβLγ+ 3(1− ˆβ) + ˆβ+ 3/2ˆβ(1−β)≤3
+⇐12 ˆβLγ+ ˆβ+ 3/2ˆβ(1−β)≤3 ˆβ
+⇐24Lγ≤1,(28)
+where the last inequality holds by the choice of the step-sizeγ≤1
+24L. For the third coefficient, we
+have
+12 ˆβLγ+ 3(1− ˆβ) + ˆββ+ 3/2ˆβ(1−β)≤3
+⇐12 ˆβLγ+ ˆββ+ 3/2ˆβ(1−β)≤3 ˆβ
+⇐24Lγ≤1,(29)
+where the last inequality holds by the choice of the step-sizeγ≤ 1
+24L. For the fourth coefficient,
+we have
+ˆβ+ 12 ˆβ2Lγ+ ˆβ2(1−β)≤3 ˆβ⇐12Lγ ˆβ2 + ˆβ2≤2 ˆβ⇐12Lγ≤1,(30)
+25
+where the second last inequality holds by the choice of the step-sizeγ≤1
+24L,and the last inequality
+holds by the choice of the momentum parameterˆβ≤1.For the fifth coefficient, we have
+8 ˆβ2Lγ+ 12 ˆβ2Lγ+ 4 ˆβ2(1−β)≤ ˆβ⇐20 ˆβLγ+ 4 ˆβ≤1,(31)
+where the last inequality holds by the choice of the step-sizeγ≤ 1
+24L and momentum parameter
+ˆβ≤ 1
+24.For the sixth coefficient, we have
+3/2ˆβ2(1−β) + 3 ˆβ(1− ˆβ) + 12ˆβ2Lγ+ 8 ˆβ2Lγ≤3
+⇐ 3/2ˆβ2 + 20ˆβ2Lγ≤3 ˆβ
+⇐20 ˆβLγ≤ 3
+2
+⇐ 40
+3
+ˆβLγ≤1,(32)
+where the last inequality holds by the choice of the step-sizeγ≤ 1
+24L and momentum parameter
+ˆβ≤1.
+Lemma 6.Let eachf i beL-smooth,∆≥Φ 0,B init > τ. Assume that the following inequalities
+hold for the iterates generated byByz-Clip21-SGD2M
+1.γ≤ 1
+24L;
+2.12Lγ≤β;
+3.β, ˆβ∈[0,1];
+4.∥ mt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT,
+5.∥ gt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT;
+6.∥∇f i(xt−1)−v t−1
+i ∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτTfor all
+i∈G;
+7.∥v t
+i−g t−1
+i ∥≤B init for alli∈G;
+8.∥Ω t∥≤a;
+9.∥Ω t−1
+i ∥≤ˆafor alli∈G;
+10.∥θ t
+i∥≤bfor alli∈G;
+11.Φ t−1≤2∆.
+Then we have
+∥∇fi(xt)−v t
+i∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT.(33)
+26
+Proof.We have
+∥∇fi(xt)−v t
+i∥
+(i)
+=∥∇f i(xt)−(1−β)v t−1
+i −β∇f i(xt,ξt
+i)∥
+(ii)
+≤(1−β)∥∇f i(xt)−v t−1
+i ∥+β∥∇fi(xt)−∇f i(xt,ξt
+i)∥
+(iii)
+≤(1−β)∥∇f i(xt)−∇f i(xt−1)∥+(1−β)∥∇f i(xt−1)−v t−1
+i ∥+β∥θt
+i∥
+(iv)
+≤(1−β)Lγ∥g t−1∥+(1−β)∥∇f i(xt−1)−v t−1
+i ∥+β∥θt
+i∥
+(v)
+≤(1−β)Lγ∥ mt−1−g t−1∥+(1−β)Lγ∥ mt−1∥+(1−β)∥∇f i(xt−1)−v t−1
+i ∥+β∥θt
+i∥
+(vi)
+≤(1−β)Lγ
+
+2 ˆβτT
+√
+2cδbyz + 2ˆβ
+√2cδbyz
+G
+∑
+i∈G
+∥Ωt−1
+i ∥2
+
+ + (1−β)Lγ∥ mt−1∥
++β∥θ t
+i∥+(1−β)∥∇f i(xt−1)−v t−1
+i ∥
+(vii)
+≤2 ˆβLγ
+√
+2cδbyzτT+ 2 ˆβLγ(1−β)
+√
+2cδbyzˆa+βb
++ (1−β)Lγ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT
+)
++ (1−β)
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3/2
+√
+2cδbyz ˆβτT
+)
+≤
+√
+L∆[8Lγ+ 2(1−β)] + (B init−τ)[3Lγ+ 3(1−β)/2] +b[3Lγ+β+ 3(1−β)/2]
++ ˆβa[3Lγ+ (1−β)] +
+√
+2cδbyz ˆβˆa[2Lγ+Lγ+ 4(1−β)]
++
+√
+2cδbyz ˆβτT[2Lγ+ 3Lγ+ 3
+2(1−β)],
+where(i)follows from the update rule ofv t
+i,(ii)-(iii)– from triangle inequality and definition
+ofθ t
+i,(iv)– fromL-smoothness and the update rule ofxt,(v)– from triangle inequality(vi)– from
+(18) and inequality
+√
+a+b≤ √a+
+√
+bfor anya,b≥0,(vii)– from the assumptions4-7,9,10of
+the lemma.
+For the first coefficient, we have
+8Lγ+ 2(1−β)≤2⇐4Lγ≤β(34)
+where the last inequality holds by the choice of the step-size12Lγ≤β. For the second coefficient,
+we have
+3Lγ+ 3
+2(1−β)≤ 3
+2⇐2Lγ≤β,(35)
+where the last inequality holds by the choice of the step-size12Lγ≤β. For the third coefficient,
+we have
+3Lγ+β+ 3
+2(1−β)≤ 3
+2⇐6Lγ≤β,(36)
+where the last inequality holds by the choice of the step-size12Lγ≤β. For the fourth coefficient,
+we have
+3Lγ+ (1−β)≤1⇐3Lγ≤β,(37)
+the last inequality holds by the choice of the step-size12Lγ≤β.For the fifth coefficient, we have
+2Lγ+Lγ+ 4(1−β)≤4⇐3Lγ≤4β,(38)
+where the last inequality holds by the choice of the step-size12Lγ≤β. For the sixth coefficient,
+we have
+2Lγ+ 3Lγ+ 3
+2(1−β)≤ 3
+2⇐ 10
+3 Lγ≤β,(39)
+where the last inequality holds by the choice of the step-size12Lγ≤β. This concludes the
+proof.
+27
+Lemma 7.Let eachf i beL-smooth,∆≥Φ 0,B init > τ. Assume that the following inequalities
+hold for the iterates generated byByz-Clip21-SGD2M
+1.γ≤ 1
+24L;
+2.β∈[0,1];
+3. ˆβ≤min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa,1
+}
+;
+4.∥ mt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT,
+5.∥ gt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT;
+6.∥∇f i(xt−1)−v t−1
+i ∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτTfor all
+i∈G;
+7.∥v t
+i−g t−1
+i ∥≤B init for alli∈G;
+8.∥Ω t∥≤a;
+9.∥Ω t−1
+i ∥≤ˆafor alli∈G;
+10.∥θ t
+i∥≤bfor alli∈G;
+11.Φ t−1≤2∆.
+Then we have
+∥gt∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT.(40)
+Proof.We have
+∥gt∥
+(i)
+=
+
+gt−1 + 1
+G
+∑
+i∈G
+ˆβclipτ(vt
+i−g t−1
+i )
+
+=
+
+ˆβ∇f(xt) + ˆβ(vt−∇f(x t)) + (1− ˆβ)gt−1 +
+ˆβ
+G
+∑
+i∈G
+[clipτ(vt
+i−g t−1
+i )−(v t
+i−g t−1
+i )]
+
+(ii)
+≤ ˆβ∥∇f(xt)∥+
+ˆβ
+G
+∑
+i∈G
+∥vt
+i−∇fi(xt)∥+(1− ˆβ)∥gt−1∥
++
+ˆβ
+G
+∑
+i∈G
+∥clipτ(vt
+i−g t−1
+i )−(v t
+i−g t−1
+i )∥
+(iii)
+≤ ˆβ∥∇f(xt−1)∥+ ˆβ∥∇f(xt)−∇f(x t−1)∥+
+ˆβ
+G
+∑
+i∈G
+∥(1−β)v t−1
+i +β∇f i(xt,ξt
+i)−∇f i(xt)∥
++ (1− ˆβ)∥gt−1∥+
+ˆβ
+G
+∑
+i∈G
+max
+{
+∥vt
+i−g t−1
+i ∥−τ,0
+}
+,(41)
+where(i)follows from the update rule ofg t
+i,(ii)– from the triangle inequality,(iii)– from the
+update rule ofvt
+i,triangle inequality, and Lemma 1. We continue the derivation of the bound as
+28
+follows
+∥gt∥
+(iv)
+≤ ˆβ
+√
+2L(f(xt−1)−f ⋆) + ˆβLγ∥gt−1∥+(1− ˆβ)∥gt−1∥+ ˆβ(Binit−τ)
++
+ˆβ
+G
+∑
+i∈G
+(
+(1−β)∥v t−1
+i −∇fi(xt−1)∥+(1−β)∥∇f i(xt−1)−∇f i(xt)∥+β∥θt
+i∥
+)
+,
+(v)
+≤ ˆβ
+√
+4L∆ + ˆβLγ(2−β)∥g t−1∥+(1− ˆβ)∥gt−1∥+ ˆβ(Binit−τ) + ˆββb
++
+ˆβ
+G(1−β)
+∑
+i∈G
+∥vt−1
+i −∇fi(xt−1)∥
+(vi)
+≤ ˆβ
+√
+4L∆ + ˆβLγ(2−β)∥ mt−1−g t−1∥+ ˆβLγ(2−β)∥ mt−1∥+(1− ˆβ)∥gt−1∥+ ˆβ(Binit−τ)
++ ˆββb+
+ˆβ
+G(1−β)
+∑
+i∈G
+∥vt−1
+i −∇fi(xt−1)∥,(42)
+where(iv)follows fromL-smoothness, the update rule ofx t, assumption 7 of the lemma, and
+triangle inequality,(v)– from assumptions 10 and 11 of the lemma,L-smoothness, the update rule
+ofx t,(vi)– from triangle inequality. Using (18) we continue
+∥gt∥
+(vii)
+≤ ˆβ
+√
+4L∆ + 2Lγˆβ
+
+2 ˆβτT
+√
+2cδbyz + 2ˆβ
+√2cδbyz
+G
+∑
+i∈G
+∥Ωt−1
+i ∥2
+
+ + 2Lγ ˆβ∥mt−1∥
++ (1− ˆβ)∥gt−1∥+ ˆβ(Binit−τ) + ˆββb+
+ˆβ
+G(1−β)
+∑
+i∈G
+∥vt−1
+i −∇fi(xt−1)∥,(43)
+where(vii)follows from (18) and inequality
+√
+a+b≤ √a+
+√
+bfor any positivea,b. Then, we get
+∥gt∥
+(viii)
+≤ ˆβ
+√
+4L∆ + 4Lγˆβ2τT
+√
+2cδbyz + 4Lγ ˆβ2
+√
+2cδbyzˆa+ˆβ(Binit−τ) + ˆββb
++ 4Lγ ˆβ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT
+)
++ (1− ˆβ)
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT
+)
++ ˆβ(1−β)
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)
+,(44)
+where(viii)follows from the assumptions 4-6 and 9 of the lemma. Regrouping the terms, we derive
+∥gt∥≤
+√
+L∆[2 ˆβ+ 32Lγ ˆβ+ 8(1− ˆβ) + 2ˆβ]
++ (B init−τ)[ ˆβ+ 12Lγ ˆβ+ 3(1− ˆβ) + 3ˆβ(1−β)/2]
++b[ ˆββ+ 12Lγ ˆβ+ 3(1− ˆβ) + 3ˆβ(1−β)/2] + ˆβa[12Lγ ˆβ+ (1−β) ˆβ]
++ ˆβ
+√
+2cδbyzˆa[4Lγˆβ+ 4Lγ ˆβ+ 4 ˆβ(1− ˆβ)]
++
+√
+2cδbyz ˆβτT[4Lγ ˆβ+ 12Lγ ˆβ+ 3(1− ˆβ) + 3ˆβ(1−β)/2],(45)
+For the second term, we have
+ˆβ+ 12Lγ ˆβ+ 3(1− ˆβ) + 3
+2
+ˆβ(1−β)≤3⇐ ˆβ+ 12Lγ ˆβ+ 3
+2
+ˆβ≤3 ˆβ⇐24Lγ≤1,(46)
+where the last inequality holds by the choice of the step-size24Lγ≤1. For the third term, we have
+ˆββ+ 12Lγ ˆβ+ 3(1− ˆβ) + 3
+2
+ˆβ(1−β)≤3⇐β ˆβ+ 12Lγ ˆβ+ 3
+2
+ˆβ≤3 ˆβ⇐24Lγ≤1,(47)
+29
+where the last inequality holds by the choice of the step-size24Lγ≤1. For the fourth term, we
+have
+ˆβa[12Lγ ˆβ+ (1−β) ˆβ]≤
+√
+L∆[12Lγ ˆβ+ (1−β) ˆβ],(48)
+where we useˆβ≤
+√
+L∆
+a . Next, for the fifth term, we have
+ˆβ
+√
+2cδbyzˆa[4Lγˆβ+ 4Lγ ˆβ+ 4 ˆβ(1− ˆβ)]≤
+√
+L∆[2Lγ ˆβ+ ˆβ(1−β)],(49)
+where we useˆβ≤
+√
+L∆
+4
+√
+2cδbyzˆa. Therefore, combining the two inequalities (48) and (49) with the first
+term, we obtain for the coefficient next to
+√
+L∆
+12Lγ ˆβ+ ˆβ(1−β) + 2Lγ ˆβ+ ˆβ(1−β) + 2 ˆβ+ 32Lγ ˆβ+ 8(1− ˆβ) + 2ˆβ≤8
+⇐46Lγ ˆβ+ 2 ˆβ(1−β) + 4 ˆβ≤8 ˆβ
+⇐23Lγ≤1,(50)
+where the last inequality holds by the choice of the step-size24Lγ≤1. For the sixth coefficient,
+we have
+4Lγ ˆβ+ 12Lγ ˆβ+ 3(1− ˆβ) + 3 ˆβ(1−β)
+2 ≤3⇐16Lγ ˆβ+ 3 ˆβ(1−β)
+2 ≤3 ˆβ,
+⇐ 32
+3 Lγ≤1,(51)
+where the last inequality holds by the choice of the step-size24Lγ≤1. This concludes the proof.
+Lemma 8.Let eachf i beL-smooth,∆≥Φ 0,B init > τ, andi∈I t :={i∈G|∥v t
+i−g t−1
+i ∥> τ}.
+Assume that the following inequalities hold for the iterates generated byByz-Clip21-SGD2M:
+1.γ≤ 1
+24L;
+2.β≤min
+{ ˆβτ
+54
+√
+L∆,1
+}
+;
+3.β≤min
+{
+2ˆβτ
+39(Binit−τ),1
+}
+;
+4.β≤min
+{
+2ˆβτ
+69b,1
+}
+;
+5.β≤min
+{
+2
+41
+√
+2cδbyzT,1
+}
+;
+6. ˆβ∈min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa, 1
+24
+}
+;
+7.∥ mt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT,
+8.∥ gt−1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT;
+9.∥∇f i(xt−1)−v t−1
+i ∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτTfor all
+i∈G;
+10.∥Ω t
+i∥≤ˆafor alli∈G;
+11.∥θ t
+i∥≤band∥θ t+1
+i ∥≤bfor alli∈G.
+Then we have
+∥vt+1
+i −g t
+i∥≤∥v t
+i−g t−1
+i ∥−τ ˆβ
+2 .(52)
+30
+Proof.Sincei∈I t,then∥v t
+i−g t−1
+i ∥>τand from Lemma 4 we have
+∥vt+1
+i −g t
+i∥≤(1− ˆβ)∥vt
+i−g t−1
+i ∥+ ˆβ∥vt
+i−g t−1
+i ∥− ˆβτ+βLγ∥ mt∥+β∥∇fi(xt)−v t
+i∥
++ 2 ˆββLγτT
+√
+2cδbyz + 2β ˆβLγ
+√2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2 +β∥θ t+1
+i ∥.(53)
+Using the assumptions of the lemma and Lemmas 5 and 6, we obtain from (53)
+∥vt+1
+i −g t
+i∥≤∥v t
+i−g t−1
+i ∥− ˆβτ+βLγ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT
+)
++β
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)
++ 2 ˆββLγτT
+√
+2cδbyz + 2β ˆβLγ
+√
+2cδbyzˆa+βb.(54)
+Regrouping the terms, we derive
+∥vt+1
+i −g t
+i∥≤∥v t
+i−g t−1
+i ∥− ˆβτ+
+√
+L∆[8Lγβ+ 2β] + (B init−τ)[3Lγβ+ 3β/2]
++b[3Lγβ+ 3β/2+β] + ˆβa[3Lγβ+β] + ˆβ
+√
+2cδbyzˆa[3βLγ+ 4β]
++ ˆβτT
+√
+2cδbyz[3βLγ+ 3β/2+ 2βLγ]
+=∥v t
+i−g t−1
+i ∥− ˆβτ+
+√
+L∆[8Lγβ+ 2β] + (B init−τ)[3Lγβ+ 3β/2]
++b[3Lγβ+ 5β/2] + ˆβa[3Lγβ+β] + ˆβ
+√
+2cδbyzˆa[3βLγ+ 4β]
++ ˆβτT
+√
+2cδbyz[5βLγ+ 3β/2](55)
+First, note that using restrictionsˆβa≤
+√
+L∆, we obtain
+ˆβa[3Lγβ+β]≤
+√
+L∆[3Lγβ+β].(56)
+Next, we also have
+ˆβ
+√
+2cδbyzˆa[3βLγ+ 4β]≤
+√
+L∆
+4 [3βLγ+ 4β] =
+√
+L∆[3/4βLγ+β].(57)
+Combining (56) and (57) with other terms involving
+√
+L∆and using24Lγ≤1, we have
+√
+L∆[3Lγβ+β+ 3/4Lγβ+β+ 8Lγβ+ 2β]≤
+√
+L∆[12Lγβ+ 4β]≤
+√
+L∆9β
+2 ≤
+ˆβτ
+12,(58)
+where we usedβ≤
+ˆβτ
+54
+√
+L∆ and24Lγ≤1. Again, since24Lγ≤1, we have
+[3Lγβ+ 3β/2](Binit−τ)≤ 13β
+8 (Binit−τ)≤
+ˆβτ
+12,(59)
+where we usedβ≤ 2ˆβτ
+39(Binit−τ). Since24Lγ≤1, we have
+[3Lγβ+ 3β/2+β]b≤ 23β
+8 b≤
+ˆβτ
+12,(60)
+where we useβ≤ 2ˆβτ
+69b. Since24Lγ≤1, we have
+[5βLγ+ 3β/2]ˆβτT
+√
+2cδbyz≤ 41
+24β ˆβτT
+√
+2cδbyz≤
+ˆβτ
+12,(61)
+31
+where we useβ≤ 2
+41
+√
+2cδbyzT. Combining all the bounds, we obtain from (55) that
+∥vt+1
+i −g t
+i∥≤∥v t
+i−g t−1
+i ∥− ˆβτ+
+√
+L∆[8Lγβ+ 2β] + (B init−τ)[3Lγβ+ 3β/2]
++b[3Lγβ+ 5β/2] + ˆβa[3Lγβ+β] + ˆβ
+√
+2cδbyzˆa[3βLγ+ 4β]
++ ˆβτT
+√
+2cδbyz[5βLγ+ 3β/2]
+≤∥v t
+i−g t−1
+i ∥− ˆβτ+ 4· τ ˆβ
+12 + τ ˆβ
+6
+=∥v t
+i−g t−1
+i ∥−
+ˆβτ
+2 .(62)
+Lemma 9(Lemma 17 from Islamov et al. [2025b]).Let∥θ t+1
+i ∥≤bfor alli∈G.Let eachf i be
+L-smooth. Then, for the iterates generated byByz-Clip21-SGD2Mthe quantity˜Pt := 1
+G
+∑
+i∈G∥vt
+i−
+∇fi(xt)∥2 decreases as
+˜Pt+1≤(1−β) ˜Pt + 3L2
+β Rt +β 2b2 + 2
+Gβ(1−β)
+∑
+i∈G
+⟨vt
+i−∇fi(xt+1),θt+1
+i ⟩,(63)
+whereR t :=∥x t+1−xt∥2 andθ t
+i =∇f i(xt,ξt
+i)−∇f i(xt).
+Lemma 10(Lemma 18 from Islamov et al. [2025b]).Let∥θt+1∥≤ ˆc√
+G. Let eachfi beL-smooth.
+Then, for the iterates generated byByz-Clip21-SGD2Mthe quantity˜Pt :=∥vt−∇f(x t)∥2 decreases
+as
+˜Pt+1≤(1−β) ˜Pt + 3L2
+β Rt +β 2c2
+G + 2β(1−β)⟨ vt−∇f(x t+1),θt+1⟩,(64)
+whereR t :=∥x t+1−xt∥2 andθ t = 1
+G
+∑
+i∈G∇fi(xt,ξt
+i)−∇f i(xt).
+Lemma 11(Lemma 19 from Islamov et al. [2025b]).Let∥θt
+i∥≤bfor alli∈G,eachf i beL-smooth,
+and∥v t
+i−gt−1
+i ∥≤B init for alli∈Gand someB init>τ,and ˆβ≤ 1
+2η. Then for the iterates generated
+byByz-Clip21-SGD2Mwe have
+∥gt
+i−v t
+i∥2≤(1− ˆβη)∥gt−1
+i −v t−1
+i ∥2+4β2
+ˆβη
+∥vt−1
+i −∇fi(xt−1)∥2+4β2L2
+ˆβη
+Rt−1 +β 2b2
++ 2(1− ˆβη)2β⟨(gt−1
+i −v t−1
+i ) +β(v t−1
+i −∇fi(xt−1)),θt
+i⟩
++ 2(1− ˆβη)2β2⟨∇fi(xt−1)−∇f i(xt),θt
+i⟩,
+(65)
+whereR t :=∥x t+1−xt∥2 andη := τ
+Binit
+∈(0,1).Moreover, averaging the inequalities overi∈G,
+we get
+˜Vt≤(1− ˆβη)˜Vt−1 + 4β2
+ˆβη
+˜Pt−1 + 4β2L2
+ˆβη
+Rt−1 +β 2b2 (66)
++ 2
+G(1− ˆβη)2β
+∑
+i∈G
+⟨(gt−1
+i −v t−1
+i ) +β(v t−1
+i −∇fi(xt−1)) +β(∇fi(xt−1)−∇f i(xt)),θt
+i⟩,
+where ˜Vt := 1
+G
+∑
+i∈G∥gt
+i−v t
+i∥2 and ˜Pt := 1
+G
+∑
+i∈G∥vt
+i−∇fi(xt)∥2.
+32
+Let us define constants that we will use in the proof of the main theorem.
+a :=
+
+√
+2 + 2
+√
+3 log 8(T+ 1)
+α
+
+√
+dσω
+√
+T
+G,
+ˆa:=
+
+√
+2 + 2
+√
+3 log 8G(T+ 1)
+α
+
+√
+dσω
+√
+T,
+b2 := 2σ2 log
+(16(T+ 1)G
+α
+)
+,
+ˆc2 :=
+
+√
+2 + 2
+√
+3 log 8(T+ 1)
+α
+
+
+2
+σ2,
+(67)
+D Proof of Theorem 5.1
+Theorem D.1(Full statement of Theorem 5.1).Let Assumptions 3.1 and 3.2, and defineBinit :=
+max{3τ,max i{∥∇fi(x0)∥}+b}. Let the failure probabilityαbe such thatα∈(0,1), and constants
+a,ˆa,b,andcbe defined as in (67), and∆≥Φ 0 forΦ 0 defined in(9). Consider the run of
+Byz-Clip21-SGD2M(Algorithm 1) forTiterations with DP noise varianceσω. Assume the following
+inequalities hold
+1.step-size restrictions:
+(a)γ≤ 1
+24L;
+(b)12Lγ=β;
+(c)
+5
+6− 32L2β2
+ˆβ2η2 γ2− 96L2
+ˆβ2η2γ2≥0.(68)
+2.momentum restrictions:
+(a)β≤min
+{ ˆβτ
+54
+√
+L∆,1
+}
+;
+(b)β≤min
+{
+2ˆβτ
+39(Binit−τ),1
+}
+;
+(c)β≤min
+{
+2ˆβτ
+69b,1
+}
+;
+(d)β≤min
+{
+2
+41
+√
+2cδbyzT,1
+}
+;
+(e) ˆβ∈min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa,1
+}
+;
+(f) and momentum restrictions defined in (71), (72), (73), (74), (75), (77), (76), and (78);
+Then, with probability1−α, we bound 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 with
+√
+L∆(
+√
+L∆ +B init +σ) ˜O
+(√
+dσω√
+GTτ
++ d1/3σ2/3
+ω
+(TG) 1/3τ 2/3 +
+√
+cδbyz
+√
+dσω√
+Tτ
++
+√
+cδbyz
+)
+,
+where ˜Ohides constant and logarithmic factors and higher order terms decreasing inT. Let addi-
+tionally Assumption 3.3a hold, then
+√
+L∆(
+√
+L∆ +B init +σ) = ˜O
+(
+(1 +Bζ)LF 0 +ζ 2 +σ((1 +
+√
+Bζ)
+√
+LF 0 +ζ)
+)
+.
+Proof.For convenience, we define∇fi(x−1,ξ−1
+i ) =v −1
+i =g−1
+i = 0,Φ−1 = Φ0. Next, let us define
+an eventEt for eacht∈{0,...,T}such that the following inequalities hold for allk∈{0,...,t}
+33
+1.∥v k
+i−g k−1
+i ∥≤B init fori∈I k;
+2.∥ mt∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT,
+3.∥ gt∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT;
+4.∥∇f i(xt)−v t
+i∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτTfor alli∈G;
+5.∥θ k
+i∥≤bfor alli∈Gand∥θ k∥≤ ˆc√
+G;
+6.
+1
+G
+∑k+1
+l=1
+∑
+i∈Gωl
+i
+≤aand
+∑k+1
+l=1 ωl
+i
+≤ˆafor alli∈G;
+7.Φ k≤2∆;
+8.
+7
+8∆≥ 4γβ
+n ˆβη
+(1−η) 2
+k−1∑
+l=0
+∑
+i∈G
+⟨(gl
+i−v l
+i) +β(v l
+i−∇fi(xl)) +β(∇fi(xl)−∇f i(xl+1)),θt
+i⟩
++ 16γβ 2
+n ˆβ2η2 (1−β)
+k−1∑
+l=0
+∑
+i∈G
+⟨vl
+i−∇fi(xl),θl+1
+i ⟩+ 4γ(1−β)
+k−1∑
+l=0
+⟨vl−∇f(x l),θl+1⟩
++ 15γβ 2
+n ˆβ2η2 (1−β)
+k−1∑
+l=0
+∑
+i∈G
+⟨∇fi(xl)−∇f i(xl+1),θl+1
+i ⟩
++ 4γ(1−β)
+k−1∑
+l=0
+⟨∇f(xl)−∇f(x l+1),θl+1⟩.
+Then, we will derive the result by induction, i.e., using the induction w.r.t.t, we will show that
+P(Et)≥1− α(t+1)
+T+1 for allt∈{0,...,T−1}.
+Before moving on to the proof’s induction part, we need to establish several useful bounds.
+Denote the eventsΘt
+i,Θt andN t+1 as
+Θt
+i :={∥θ t
+i∥≥b},Θ t :=
+{
+∥θt∥≥ ˆc√
+G
+}
+, N t+1 :=
+
+
+
+
+1
+G
+t∑
+l=1
+∑
+i∈G
+ωl
+i
+
+≥a
+
+
+,and
+Nt+1
+i =
+{
+t∑
+l=1
+ωl
+i
+≥ˆa
+}
+(69)
+respectively. From Assumption 3.2 we have
+P(Θt
+i)≤2 exp
+(
+− b2
+2σ2
+)
+= α
+8(T+ 1)G
+where the last equality is by definition ofb2. Therefore,P( Θt
+i)≥1− α
+8(T+1)G.Besides, notice that
+the constantˆcin (67) can be viewed as
+ˆc2 = (
+√
+2 + 2b3)σ2 whereb 2
+3 = 3 log 8(T+ 1)
+α .
+Now, we can use Lemma 2 to boundP(Θt).Since allθ t
+i are independentσ-sub-Gaussian random
+vectors, then we have
+P
+
+
+
+∑
+i∈G
+θt
+i
+
+≥ˆc
+√
+G
+
+ =P
+(
+∥θt∥≥ ˆc√
+G
+)
+≤exp(−b 2
+3/3) = α
+8(T+ 1) .
+34
+We also use Lemma 2 to boundP(Nt)andP(N t
+i ). Indeed, since allωl
+i are independent Gaussian
+random vectors, then we have
+P
+
+
+
+t∑
+l=1
+∑
+i∈G
+ωl
+i
+
+≥(
+√
+2 + 2b2)
+√
+t∑
+l=1
+∑
+i∈G
+σ2ωd
+
+≤exp(− b2
+2/3) = α
+8(T+ 1) .
+withb 2
+2 = 3 log
+(8(T+1)
+α
+)
+.This implies that
+P
+
+
+
+1
+G
+t∑
+l=1
+∑
+i∈G
+ωl
+i
+
+≥a
+
+≤ α
+8(T+ 1)
+due to the choice ofafrom (67):
+a= (
+√
+2 + 2b2)σω
+√
+d
+√
+T
+G,whereb 2
+2 = 3 log 8(T+ 1)
+α .
+Note that with this choice ofawe have that the above is true for anyt∈{1,...,T}, i.e.,P(N t)≥
+1− α
+8(T+1) for allt∈{1,...,T}.Similarly, we derive
+P
+
+
+
+t∑
+l=1
+ωl
+i
+≥(
+√
+2 + 2b4)
+√
+t∑
+l=1
+σ2ωd
+
+≤exp(− b2
+4/3)≤ α
+8G(T+ 1)
+withb 2
+4 = 3 log
+(8G(T+1)
+α
+)
+.Again, this implies that
+P
+(
+t∑
+l=1
+ωl
+i
+≥ˆa
+)
+≤ α
+8G(T+ 1)
+due to the choice ofˆafrom (67)
+ˆa= (
+√
+2 + 2b4)σω
+√
+T,whereb 2
+4 = 3 log
+(8G(T+ 1)
+α
+)
+Now, we are ready to prove thatP(Et)≥1− α(t+1)
+T+1 for allt∈{0,...,T−1}.First, we show
+that the base of induction holds.
+Base of induction.
+1.∥v 0
+i−g−1
+i ∥=∥v 0
+i∥=β∥∇f i(x0,ξ 0
+i )∥=β∥θ 0
+i∥+β∥∇fi(x0)∥≤ 1
+2b+ 1
+2Binit≤ 1
+2Binit+ 1
+2Binit =B init
+holds with probability1− α
+8(T+1). Indeed, we have
+P(Θ0
+i )≤2 exp
+(
+− b2
+2σ2
+)
+= α
+8(T+ 1)G .
+Therefore, we have
+P
+(
+∩i∈GΘ0
+i
+)
+= 1−P
+(
+∪i∈GΘ0
+i
+)
+≥1−
+∑
+i∈G
+P(Θ0
+i ) = 1−G α
+8(T+ 1)G = 1− α
+8(T+ 1) .
+Moreover, we have
+P(Θ0)≤ α
+8(T+ 1) .
+This means that the probability of the event that each
+1
+G
+∑t
+l=1
+∑
+i∈Gωl
+i
+≤a,∥ ∑t
+l=1ωl
+i∥≤ˆa
+∥θ0
+i∥≤b, and∥θ 0∥≤ c√
+G,and is at least
+1− α
+8(T+ 1) −n α
+8G(T+ 1) − α
+8(T+ 1) −n α
+8G(T+ 1) = 1− α
+2(T+ 1) .
+35
+2. We have already shown that
+P
+
+
+
+1
+G
+∑
+i∈G
+ω1
+i
+
+≥a
+
+≤ α
+8(T+ 1) ,
+implying that
+1
+G
+∑
+i∈Gω1
+i
+≤awith probability at least1− α
+8(T+1).Similarly, we have shown
+that∥∑1
+l=1ωl
+i∥≤ˆawith probability1− α
+8G(T+1).Therefore,
+3. g0 = 1
+G
+∑
+i∈G(g−1
+i + ˆβclipτ(v0
+i−g−1
+i ) = 1
+G
+∑
+i∈G ˆβclipτ(β∇fi(x0,ξ 0
+i )).Therefore, we have
+∥g0∥=
+
+1
+G
+∑
+i∈G
+ˆββ∇fi(x0) + ˆββθ 0
+i + (ˆβclipτ(β∇fi(x0,ξ 0
+i ))− ˆββ∇fi(x0,ξ 0
+i ))
+
+≤ ˆββ∥∇f(x 0)∥+
+ˆββ
+G
+∑
+i∈G
+∥θ0
+i∥+ 1
+G
+∑
+i∈G
+max
+{
+0,β∥∇fi(x0,ξ 0
+i )∥−τ
+}
+≤ ˆββ
+√
+2L(f(x 0)−f(x ⋆)) +
+ˆββ
+G
+∑
+i∈G
+∥θ0
+i∥+
+ˆβ
+G
+∑
+i∈G
+max
+{
+0,β∥∇fi(x0)∥+β∥θ0
+i∥−τ
+}
+.
+Note that if one of the maximum terms in the last sum is actually zero, then the bound is
+easier to satisfy. Therefore, we consider only the case when the maximum is always equal to
+the second term. We continue as follows
+∥g0∥≤ 1
+2
+√
+2LΦ0 + 2 ˆββ
+G
+∑
+i∈G
+∥θ0
+i∥+
+ˆββ
+G
+∑
+i∈G
+∥∇fi(x0)∥− ˆβτ
+≤
+√
+64L∆ + 2ˆββb+ ˆββBinit− ˆβτ
+≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT.
+The inequalities above again hold in∩i∈GΘ0
+i, i.e., with probability at least1− α
+8(T+1).There-
+fore, the condition3of the induction is verified. Since at iteration0we have m0 = g0,the
+condition2holds as well.
+4. We have
+∥v0
+i−∇fi(x0)∥=∥β∇f i(x0,ξ 0
+i )−∇f i(x0)∥
+≤β∥∇f i(x0,ξ 0
+i )−∇f i(x0)∥+(1−β)∥∇f i(x0)∥
+≤βb+ (1−β)B init
+The bound above holds with probability at least1− α
+8(T+1) because it holds in∩ i∈GΘ0
+i.
+Therefore, the bound5of the assumption of the induction is verified.
+5. Next, we emphasize that the condition8of the induction assumption also hold, asΦ 0 ≤
+2Φ0≤2∆by the choice of∆.
+6. We finalize the induction base by noting that the condition9of the induction assumption
+holds since the RHS equals0.
+Therefore, we conclude that the conditions1-8hold with a probability of at least
+P
+(
+Θ0∩
+(
+∩i∈GΘ0
+i
+)
+∩Nt∩
+(
+∩i∈GNt
+i
+))
+≥1−P(Θ 0)−
+∑
+i∈G
+P(Θ0
+i )−P(N 0)−
+∑
+i∈G
+P(N 0
+i )
+≥1− α
+8(T+ 1) −G· α
+8G(T+ 1) − α
+8(T+ 1) −G· α
+8G(T+ 1)
+= 1− α
+2(T+ 1) >1− α
+T+ 1 ,
+i.e.,P(E 0)≥1− α
+T+1 holds. This is the base of the induction.
+36
+Transition step of induction. Case|I K+1|>0.Assume that all events ΘK+1, ΘK+1
+i , NK+1,
+and NK+1
+i take place, i.e.,∥θ K+1
+i ∥≤b,∥θ K+1∥≤ c√
+G for alli∈G,
+1
+G
+∑K
+l=1
+∑
+i∈Gωl
+i
+≤a,and
+∑K
+l=1ωl
+i
+≤ˆafor alli∈G. That is, we assume that the event
+ΘK+1∩
+(
+∩i∈GΘK+1
+i
+)
+∩NK+1∩
+(
+∩i∈GNK+1
+i
+)
+∩E K
+holds. Then, by the assumptions of the induction and from Lemma 8 we get for alli∈IK+1
+∥vK+1
+i −g K
+i ∥≤∥v K
+i −g K−1
+i ∥−
+ˆβτ
+2 ≤B init−
+ˆβτ
+2 .
+Therefore, from Lemma 5 we get that
+∥mK+1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ ˆβ
+√
+2cδbyzˆa+ 3
+√
+2cδbyz ˆβτT,
+from Lemma 7 we get that
+∥gK+1∥≤
+√
+64L∆ + 3(Binit−τ) + 3b+ 3
+√
+2cδbyz ˆβτT,
+from Lemma 6
+∥∇fi(xK+1)−v K+1
+i ∥≤
+√
+4L∆+ 3
+2(Binit−τ)+ 3
+2b+ ˆβa+4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτTfor alli∈G.
+This means that conditions 1-7 in the induction assumption are also verified for the stepK+ 1.
+Since for allt∈{0,...,K+ 1}inequalities1-7are verified, we can write for eacht∈{0,...,K}
+by Lemmas 3 and 9 to 11 the following
+Φt+1 =δ t+1 + 2γ
+ˆβη
+˜Vt+1 + 8γβ
+ˆβ2η2
+˜Pt+1 + 2γ
+β Pt+1
+≤δ t− γ
+2∥∇f(xt)∥2− 1
+4γRt+2γ˜Vt+2γPt + 2γ ˆβ2∥Ωt∥2+16γ ˆβ2cδbyzτ 2T 2 + 16γ ˆβ2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2
++ 2γ
+ˆβη
+(
+(1− ˆβη)˜Vt+4β2
+ˆβη
+˜Pt+4β2L2
+ˆβη
+Rt +β 2b2
++ 2
+Gβ(1− ˆβη)2∑
+i∈G
+⟨(gt
+i−v t
+i) +β(v t
+i−∇fi(xt)) +β(∇fi(xt)−∇f i(xt+1)),θt+1
+i ⟩
+
+
++ 8γβ
+ˆβ2η2
+
+(1−β) ˜Pt+3L2
+β Rt +β 2b2 + 2
+Gβ(1−β)
+∑
+i∈G
+⟨vt
+i−∇fi(xt+1),θt+1
+i ⟩
+
+
++ 2γ
+β
+(
+(1−β)P t+3L2
+β Rt +β 2 ˆc2
+G + 2β(1−β)⟨v t−∇f(x t+1),θt+1⟩
+)
+37
+Rearranging terms, we get
+Φt+1≤δ t− γ
+2∥∇f(xt)∥2+ 2γ
+ˆβη
+˜Vt
+(
+ˆβη+ 1− ˆβη
+)
++ 8γβ
+ˆβ2η2
+˜Pt (β+ 1−β) + 2γ
+β Pt (β+ 1−β)
++ 2γ ˆβ2∥Ωt∥2+16γ ˆβ2cδbyzτ 2T 2 + 16γ ˆβ2cδbyz
+G
+∑
+i∈G
+∥Ωt
+i∥2
+− 1
+4γRt
+(
+1− 32L2β2
+ˆβ2η2 γ2− 96L2
+ˆβ2η2γ2− 24L2
+β2 γ2
+)
++b 2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++ ˆc2 2γβ
+G
++ 4γβ
+G ˆβη
+(1− ˆβη)2∑
+i∈G
+⟨(gt
+i−v t
+i) +β(v t
+i−∇fi(xt)) +β(∇fi(xt)−∇f i(xt+1)),θt+1
+i ⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+∑
+i∈G
+⟨vt
+i−∇fi(xt),θt+1
+i ⟩+ 4γ(1−β)⟨v t−∇f(x t),θt+1⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+∑
+i∈G
+⟨∇fi(xt)−∇f i(xt+1),θt+1
+i ⟩
++ 4γ(1−β)⟨∇f(x t)−∇f(x t+1),θt+1⟩.
+Using step-size restriction(c), and assumption6of the induction, we get rid of the term withRt
+and obtain
+Φt+1≤Φ t− γ
+2∥∇f(xt)∥2+b2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++ ˆc2 2γβ
+G + 2γ ˆβ2a2 + 16γ ˆβ2cδbyzτ 2T 2 + 16γ ˆβ2cδbyzˆa2
++ 4γβ
+G ˆβη
+(1− ˆβη)2∑
+i∈G
+⟨(gt
+i−v t
+i) +β(v t
+i−∇fi(xt)) +β(∇fi(xt)−∇f i(xt+1)),θt+1
+i ⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+∑
+i∈G
+⟨vt
+i−∇fi(xt),θt+1
+i ⟩+ 4γ(1−β)⟨v t−∇f(x t),θt+1⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+∑
+i∈G
+⟨∇fi(xt)−∇f i(xt+1),θt+1
+i ⟩
++ 4γ(1−β)⟨∇f(x t)−∇f(x t+1),θt+1⟩.
+Now we sum all the inequalities above fort∈{0,...,K}and get
+ΦK+1≤Φ 0− γ
+2
+K∑
+t=0
+∥∇f(xt)∥2+Kb2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++Kˆc2 2γβ
+G + 2γ ˆβ2a2K+ 16γ ˆβ2cδbyzˆa2K
++ 16γ ˆβ2cδbyzτ 2T 2K
++ 4γβ
+G ˆβη
+(1− ˆβη)2
+K∑
+t=0
+∑
+i∈G
+⟨(gt
+i−v t
+i) +β(v t
+i−∇fi(xt)) +β(∇fi(xt)−∇f i(xt+1)),θt+1
+i ⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨vt
+i−∇fi(xt),θt+1
+i ⟩+ 4γ(1−β)
+K∑
+t=0
+⟨vt−∇f(x t),θt+1⟩
++ 16γβ 2
+Gη2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨∇fi(xt)−∇f i(xt+1),θt+1
+i ⟩
++ 4γ(1−β)
+K∑
+t=0
+⟨∇f(xt)−∇f(x t+1),θt+1⟩.(70)
+38
+Rearranging terms and using step-size restriction(b), we get
+γ
+2
+K∑
+t=0
+∥∇f(xt)∥2≤Φ 0−ΦK+1 +Kb 2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++Kˆc2 2γβ
+G
++ β
+6L
+ˆβ2a2K+ 4β
+3L
+ˆβ2cδbyzˆa2K+ 4β
+3L
+ˆβ2τ 2cδbyzT 2K
++ 4γβ
+G ˆβη
+(1− ˆβη)2
+K∑
+t=0
+∑
+i∈G
+⟨(gt
+i−v t
+i) +β(v t
+i−∇fi(xt)) +β(∇fi(xt)−∇f i(xt+1)),θt+1
+i ⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨vt
+i−∇fi(xt),θt+1
+i ⟩+ 4γ(1−β)
+K∑
+t=0
+⟨vt−∇f(x t),θt+1⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨∇fi(xt)−∇f i(xt+1),θt+1
+i ⟩
++ 4γ(1−β)
+K∑
+t=0
+⟨∇f(xt)−∇f(x t+1),θt+1⟩.
+Taking into account thatγ
+2
+∑K
+t=0∥∇f(xt)∥2≥0and using momentum restriction (a), we get that
+the eventEK∩
+(
+∩i∈GΘK+1
+i
+)
+∩NK+1∩ ΘK+1∩
+(
+∩i∈GNK+1
+i
+)
+implies
+ΦK+1≤Φ 0 +Kb 2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++Kˆc2 2γβ
+G + τ ˆβ3a2K
+324L
+√
+L∆
++ 2τ ˆβ3cδbyzˆa2K
+81L
+√
+L∆
++ 2τ 3 ˆβ3cδbyzT 2K
+81L
+√
+L∆
++ 4γβ
+G ˆβη
+(1− ˆβη)2
+K∑
+t=0
+∑
+i∈G
+⟨(gt
+i−v t
+i) +β(v t
+i−∇fi(xt)) +β(∇fi(xt)−∇f i(xt+1)),θt+1
+i ⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨vt
+i−∇fi(xt),θt+1
+i ⟩+ 4γ(1−β)
+G
+K∑
+t=0
+∑
+i∈G
+⟨vt−∇f(x t),θt+1
+i ⟩
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨∇fi(xt)−∇f i(xt+1),θt+1
+i ⟩
++ 4γ(1−β)
+G
+K∑
+t=0
+∑
+i∈G
+⟨∇f(xt)−∇f(x t+1),θt+1
+i ⟩.
+Next, we define the following random vectors:
+ζt
+1,i :=
+{
+gt
+i−v t
+i,if∥g t
+i−v t
+i∥≤B init
+0,otherwise ,
+ζt
+2,i :=
+
+
+
+vt
+i−∇fi(xt),if∥v t
+i−∇fi(xt)∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa
++ 4 ˆβ
+√
+2cδbyzˆa
+0,otherwise
+,
+ζt
+3,i :=
+
+
+
+∇fi(xt)−∇f i(xt+1),if∥∇f i(xt)−∇f i(xt+1)∥≤Lγ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa
++ 3
+√
+2cδbyzˆaˆβ+ 5
+√
+2cδbyz ˆβτT
+)
+0,otherwise
+,
+ζt
+4 :=
+
+
+
+vt−∇f(x t),if∥v t−∇f(x t)∥≤
+√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa
++ 4 ˆβ
+√
+2cδbyzˆa
+0,otherwise
+,
+ζt
+5 :=
+
+
+
+∇f(xt)−∇f(x t+1),if∥∇f(x t)−∇f(x t+1)∥≤Lγ
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa
++ 3
+√
+2cδbyzˆaˆβ+ 5
+√
+2cδbyz ˆβτT
+)
+0,otherwise
+.
+39
+By definition, all introduced random vectorsζt
+l,i,l∈[3],i∈G,ζ t
+4,5 are bounded with probability
+1. Moreover, by the definition ofEt we get that the eventEK∩ ΘK+1∩
+(
+∩i∈GΘK+1
+i
+)
+∩NK+1∩(
+∩i∈GNK+1
+i
+)
+implies
+ζt
+1,i =g t
+i−v t
+i, ζ t
+2,i =v t
+i−∇fi(xt), ζ t
+3,i =∇f i(xt)−∇f i(xt+1),
+ζt
+4 =v t−∇f(x t), ζ t
+5 =∇f(x t)−∇f(x t+1).
+Therefore, the eventEK∩ ΘK+1∩
+(
+∩i∈GΘK+1
+i
+)
+∩NK+1∩
+(
+∩i∈GNK+1
+i
+)
+implies
+ΦK+1≤Φ 0 +Kb 2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++Kˆc2 2γβ
+G
+  
+①
++ 4γβ
+G ˆβη
+(1−η) 2
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+1,i,θt+1
+i ⟩
+  
+②
++ 4γβ 2
+G ˆβη
+(1− ˆβη)2
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+  
+③
++ 4γβ 2
+G ˆβη
+(1− ˆβη)2
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+3,i,θt+1
+i ⟩
+  
+④
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+  
+⑤
++ 4γ(1−β)
+G
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+4,θt+1
+i ⟩
+  
+⑥
++ 16γβ 2
+G ˆβ2η2 (1−β)
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+3,i,θt+1
+i ⟩
+  
+⑦
++ 4γ(1−β)
+G
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+5,θt+1
+i ⟩
+  
+⑧
++ τ ˆβ3a2K
+324L
+√
+L∆ 
+⑨
++ 2 ˆβ3cδbyzˆa2K
+81L
+√
+L∆
++ 2τ 3 ˆβ3cδbyzT 2K
+81L
+√
+L∆  
+⑩
+.
+Bound of the term①.Since12Lγ≤β, for the term①we have
+Kb2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβη2
+)
++Kˆc2 2γβ
+G ≤Kb 2
+(
+β3
+6L ˆβη
++ 2β4
+3L ˆβ2η2
+)
++Kˆc2 β2
+6LG.
+By choosingβsuch that
+β≤min
+
+
+
+(
+L∆ ˆβη
+12Tb 2
+)1/3
+,
+(
+L∆ ˆβ2η2
+48Tb 2
+)1/4
+,
+(L∆G
+12Tˆc2
+)1/2
+
+
+ (71)
+we get that
+Kb2
+(
+2β2γ
+ˆβη
++ 8γβ 3
+ˆβ2η2
+)
++Kˆc2 2γβ
+G ≤3· ∆
+72 = ∆
+24.
+This bound holds with probability1.Note that the worst dependency in the restriction onβw.r.t.
+TisO( 1/T3/4)since ˆβ∼ 1
+a∼ 1
+T that comes from the second term in (71).
+Bound of the term②.For term②, let us enumerate random variables as
+⟨ζ0
+1,1,θ 1
+1⟩,...,⟨ζ 0
+1,G,θ 1
+G⟩,⟨ζ 1
+1,1,θ 2
+1⟩,...,⟨ζ 1
+1,G,θ 2
+G⟩,...⟨ζ K
+1,1,θK+1
+1 ⟩,...,⟨ζ K
+1,G,θK+1
+G ⟩,
+i.e., first by indexi, then by indext. Then we have that the eventEK∩
+(
+∩i∈GΘK+1
+i
+)
+implies
+E
+[
+4γβ
+G ˆβη
+(1−η) 2⟨ζl
+1,i,θl+1
+i ⟩|⟨ζ l
+1,i−1,θl+1
+i−1⟩,...,⟨ζ l
+1,1,θl+1
+1 ⟩,...,⟨ζ 0
+1,1,θ 1
+1⟩
+]
+= 0,
+40
+because{θ l+1
+i }i∈G are independent. Let
+σ2
+2 := 16γ2β2
+G2 ˆβ2η2·B 2
+init·σ 2.
+Sinceθ l+1
+i isσ-sub-Gaussian random vector, for
+E[·|l,i−1] :=E
+[
+·|⟨ζ l
+1,i−1,θl+1
+i−1⟩,...,⟨ζ l
+1,1,θl+1
+1 ⟩,...,⟨ζ 0
+1,1,θ 1
+1⟩
+]
+we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+2
+16γ2β2
+G2 ˆβ2η2 (1−η) 4⟨ζl
+1,i,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+1
+16γ2β2
+G2 ˆβ2η2∥ζl
+1,i∥2·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+2
+16γ2β2
+G2 ˆβ2η2·B 2
+init∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+G2 ˆβ2η2
+16γ2β2·B 2
+init·σ 2
+16γ2β2
+G2 ˆβ2η2·B 2
+init∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θl+1
+i ∥2
+σ2 |l,i−1
+)]
+≤exp(1).
+Therefore, we have by Lemma 2 withσ2
+k≡σ 2
+2 that
+P
+
+ 4γβ
+G ˆβη
+(1− ˆβη)2
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+1,i,θt+1
+i ⟩
+
+≥(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+∑
+i∈G
+16B2
+initγ2β2σ2
+G2 ˆβ2η2
+
+
+≤exp(− b2
+1/3)
+= α
+20(T+ 1)
+withb 2
+1 = 3 log
+(20(T+1)
+α
+)
+. Note that since12Lγ≤β
+(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+∑
+i∈G
+16B2
+initγ2β2σ2
+G2 ˆβ2η2 ≤(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+∑
+i∈G
+B2
+initβ4σ2
+9L2G2 ˆβ2η2
+= (
+√
+2 +
+√
+2b1)Binitβ2σ
+3LG ˆβη
+√
+(K+ 1)G
+≤ ∆
+8,
+because we chooseβsuch that
+β≤
+(
+3L∆
+√
+G ˆβη
+8
+√
+2(1 +b 1)Binitσ
+√
+T
+)1/2
+,andK+ 1≤T.(72)
+This implies that
+P
+
+ 4γβ
+G ˆβη
+(1− ˆβη)2
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+1,i,θt+1
+i ⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1)
+with this choice of momentum parameter. The dependency of (72) onTis˜O(1/T3/4)since ˆβ∼ 1
+T.
+41
+Bound of the term③.The bound in this case is similar to the previous one. Let
+σ2
+3 := 16γ2β4
+G2 ˆβ2η2·
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2
+√
+2cδbyz ˆβτT+ 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa
+)2
+·σ 2.
+Then,
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+3
+16γ2β4
+G2 ˆβ2η2 (1− ˆβη)4⟨ζl
+2,i,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+3
+16γ2β4
+G2 ˆβ2η2∥ζl
+2,i∥2·∥θl+1
+i ∥2
+)]
+≤E
+[
+exp
+(
+1
+σ3
+2
+16γ2β4
+G2 ˆβ2η2·
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa
++ 4 ˆβ
+√
+2cδbyzˆa
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+
+exp
+
+
+[
+16γ2β4
+G2 ˆβ2η2·
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa
+)2
+·σ 2
+]−1
+×
+16γ2β4
+G2 ˆβ2η2·
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θl+1
+i ∥2
+σ2
+)
+|l,i−1
+]
+≤exp(1).
+Therefore, we have by Lemma 2 that
+P
+
+4γβ 2
+G ˆβη
+(1− ˆβη)2
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+
+≥(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+∑
+i∈G
+16γ2β4σ2
+G2 ˆβ2η2
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa
+)2
+
+
+≤exp(− b2
+1/3) = α
+20(T+ 1) .
+Note that by using the restrictionsˆβ≤min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa
+}
+and12Lγ≤βwe get
+(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G 4γβ 2σ
+ˆβηG
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa
+)
+≤(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G β3σ
+3L ˆβηG
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ 3
+2
+√
+2cδbyz ˆβτT+ 2
+√
+L∆
+)
+= (
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G β3σ
+3L ˆβηG
+(
+4
+√
+L∆ + 3
+2(Binit−τ) + 3
+2b
+)
++
+(1 +b 1)
+√
+(K+ 1)G β3σ
+LηG
+√
+cδbyzτT
+≤ ∆
+16 + ∆
+16 = ∆
+8
+42
+holds because we choose
+β≤min
+
+
+
+
+ 3L∆ ˆβη
+√
+G
+16
+√
+2(1 +b 1)σ
+√
+T
+(
+4
+√
+L∆ + 3
+2(Binit−τ) + 3
+2b
+)
+
+
+1/3
+,
+(
+L∆η
+√
+G
+16(1 +b 1)
+√
+cδbyzστT 3/2
+)1/3
+
+,(73)
+andK+ 1≤T.
+This implies
+P
+
+4γβ 2
+G ˆβη
+(1− ˆβη)2
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1) .
+Note that both terms in the choice ofβhave the dependency w.r.t.Tof order ˜O(1/T1/2)since
+ˆβ∼ 1
+T.
+Bound of the term④.The bound in this case is similar to the previous one. Let
+σ2
+4 := 16L2γ4β4
+G2 ˆβ2η2
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·σ 2.
+Then we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+4
+16γ2β4
+G2 ˆβ2η2 (1− ˆβη)4⟨ζl
+3,i,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+4
+16γ2β4
+G2 ˆβ2η2∥ζl
+3,i∥2·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+4
+16γ2β4
+G2 ˆβ2η2·L 2γ2
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa
++ 5
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+
+exp
+
+
+[
+16L2γ4β4
+G2 ˆβ2η2
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·σ 2
+]−1
+×
+16L2γ4β4
+G2 ˆβ2η2
+(√
+64L∆ + 3(Binit−τ) + 3b+ 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θl+1
+i ∥2
+σ2
+)]
+≤exp(1).
+Therefore, we have by Lemma 2 that
+P
+
+4γβ 2
+G ˆβη
+(1− ˆβη)2
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+3,i,θt+1
+i ⟩
+
+≥
+√
+2(1 +b 1)
+√
+K∑
+t=0
+∑
+i∈G
+16L2γ4β4σ2
+G2 ˆβ2η2
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+
+
+≤exp(− b2
+1/3) = α
+20(T+ 1) .
+43
+Using the restrictions ˆβ≤min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa
+}
+and12Lγ≤βwe get
+√
+2(1 +b 1)
+√
+(K+ 1)G 4Lγ2β2σ
+ˆβηG
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3 ˆβ
+√
+2cδbyzˆa+ 5
+√
+2cδbyz ˆβτT
+)
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)G β4σ
+36L ˆβηG
+(√
+64L∆ + 3(Binit−τ+b) + 4
+√
+L∆ + 5
+√
+2cδbyz ˆβτT
+)
+=
+√
+2(1 +b 1)
+√
+(K+ 1)G β4σ
+36L ˆβηG
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
++
+(1 +b 1)
+√
+(K+ 1)G 5β4σ
+18LηG
+√
+cδbyzτT
+≤ ∆
+16 + ∆
+16 = ∆
+8,
+because we chooseβsuch that
+β≤min
+
+
+
+
+ 9L∆ ˆβη
+√
+G
+16
+√
+2(1 +b 1)σ
+√
+T
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
+
+
+1/4
+,
+(
+9L∆η
+√
+G
+80(1 +b 1)σ
+√
+cδbyzT 3/2τ
+)1/4
+
+,(74)
+andK+ 1≤T.
+This implies
+P
+
+4γβ 2
+G ˆβη
+(1− ˆβη)2
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1) ,
+Note that both terms in the choice ofβhave the dependency w.r.t.Tof order ˜O(1/T3/8)since
+ˆβ∼ 1
+T.
+Bound of the term⑤.The bound in this case is similar to the previous one. Let
+σ2
+5 := 256γ2β4
+G2 ˆβ4η4 ·
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)2
+·σ 2.
+Then we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+5
+256γ2β4
+G2 ˆβ4η4 (1−β) 2⟨ζl
+2,i,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+5
+256γ2β4
+G2 ˆβ4η4∥ζl
+2,i∥2·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+5
+256γ2β4
+G2 ˆβ4η4 ·
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+
+3
+2
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+
+exp
+
+
+[
+256γ2β4
+L2G2 ˆβ4η4·
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)2
+·σ 2
+]−1
+256γ2β4
+G2 ˆβ4η4 ·
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θl+1
+i ∥2
+σ2
+)
+|l,i−1
+]
+≤exp(1).
+44
+Therefore, we have by Lemma 2 that
+P
+
+ 16γβ 2
+G ˆβ2η2 (1−β)
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+
+≥(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+∑
+i∈G
+256γ2β4σ2
+G2 ˆβ4η4
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)2
+
+
+≤exp(− b2
+1/3) = α
+20(T+ 1) .
+Using the restrictions12Lγ≤βand ˆβ≤
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa
+}
+we get
+√
+2(1 +b 1)
+√
+(K+ 1)G 16γβ 2σ
+G ˆβ2η2
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)G 4β3σ
+3LG ˆβ2η2
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+
+√
+L∆ +
+√
+L∆ + 3
+2
+√
+2cδbyz ˆβτT
+)
+=
+√
+2(1 +b 1)
+√
+(K+ 1)G 4β3σ
+3LG ˆβ2η2
+(
+4
+√
+L∆ + 3
+2(Binit−τ+b)
+)
++
+(1 +b 1)
+√
+(K+ 1)G 4β3σ
+3LG ˆβη2
+√
+cδbyzτT
+≤ ∆
+16 + ∆
+16 = ∆
+8
+because we chooseβsuch that
+β≤min
+
+
+
+
+ 3L∆ ˆβ2η2√
+G
+64
+√
+2(1 +b 1)σ
+√
+T
+(
+4
+√
+L∆ + 3
+2(Binit−τ+b)
+)
+
+
+1/3
+,
+(
+3L∆ ˆβη2√
+G
+32(1 +b 1)τT 3/2√
+cδbyz
+)1/3
+
+
+
+,
+(75)
+andK+ 1≤T.
+This implies
+P
+
+ 16γβ 2
+G ˆβ2η2 (1− ˆββ)
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+2,i,θt+1
+i ⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1) .
+Note that both terms in the choice ofβhave the dependency w.r.t.Tof order ˜O(1/T5/6)since
+ˆβ∼ 1
+T.
+Bound of the term⑦.The bound in this case is similar to the previous one. Let
+σ2
+7 := 256L2γ4β4
+G2 ˆβ4η4
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·σ 2.
+45
+Then we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+7
+256L2γ4β4
+G2 ˆβ4η4 (1−β) 2⟨ζl
+3,i,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+7
+256γ2β4
+G2 ˆβ4η4∥ζl
+3,i∥2·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+256γ2β4
+G2 ˆβ4η4 ·L 2γ2
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyzˆaˆβ+
+4
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+
+exp
+
+
+[
+256L2γ4β4
+G2 ˆβ4η4
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyzˆaˆβ+ 4
+√
+2cδbyz ˆβτT
+)2
+·σ 2
+]−1
+×
+256L2γ4β4
+G2 ˆβ4η4
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyzˆaˆβ+ 4
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θl+1
+i ∥2
+σ2
+)
+|l,i−1
+]
+≤exp(1).
+Therefore, we have by Lemma 2 that
+P
+
+ 16γβ 2
+G ˆβ2η2 (1−β)
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+3,i,θt+1
+i ⟩
+
+≥
+√
+2(1 +b 1)
+√
+K∑
+t=0
+∑
+i∈G
+256L2γ4β4σ2
+G2 ˆβ4η4 ·
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyzˆaˆβ+ 4
+√
+2cδbyz ˆβτT
+)2
+
+
+≤exp(− b2
+1/3) = α
+20(T+ 1) .
+Using the restrictions12Lγ≤βand ˆβ≤min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa
+}
+we get
+√
+2(1 +b 1)
+√
+(K+ 1)G 16Lγ2β2σ
+ˆβ2η2G
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyzˆaˆβ+ 4
+√
+2cδbyz ˆβτT
+)
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)G β4σ
+9L ˆβ2η2G
+(
+8
+√
+L∆ + 3(Binit−τ+b) + 3
+√
+L∆ + 3
+4
+√
+L∆ + 4
+√
+2cδbyz ˆβτT
+)
++
+√
+2(1 +b 1)
+√
+(K+ 1)G β4σ
+9L ˆβ2η2G
+(
+4
+√
+2cδbyz ˆβτT
+)
+=
+√
+2(1 +b 1)
+√
+(K+ 1)G β4σ
+9L ˆβ2η2G
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
++
++
+√
+2(1 +b 1)
+√
+(K+ 1)G 4β4σ
+9L ˆβη2G
+√
+2cδbyzτT
+≤ ∆
+16 + ∆
+16 = ∆
+8
+because we choose
+β≤min
+
+
+
+
+ 9L∆ ˆβ2η2√
+G
+16
+√
+2(1 +b 1)σ
+√
+T
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
+
+
+1/4
+,
+(
+9L∆ ˆβη2√
+G
+128(1 +b 1)
+√
+cδbyzτσT 3/2
+)1/4
+
+
+
+,
+(76)
+andK+ 1≤T.
+46
+This implies
+P
+
+8γβ 2
+Gη2 (1−β)
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+3,i,θt+1
+i ⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1) .
+Note that both terms in the choice ofβhave the dependency w.r.t.Tof order ˜O(1/T5/8)since
+ˆβ∼ 1
+T.
+Bound of the term⑥.The bound in this case is similar to the previous one. Let
+σ2
+6 := 16γ2
+G2
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)2
+·σ 2.
+Then we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+6
+16γ2
+G2 (1−β) 2⟨ζl
+4,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+6
+16γ2
+G2 ∥ζl
+4∥2·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+6
+16γ2
+G2
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+
+3
+2
+√
+2cδbyz ˆβτT)
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+
+exp
+
+
+[
+16γ2
+G2
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT)
+)2
+·σ 2
+]−1
+16γ2
+G2
+(√
+4L∆ + 3
+2(Binit−τ) + 3
+2b+ ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT)
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θt+1
+i ∥2
+σ2
+)
+|l,i−1
+]
+≤exp(1).
+Therefore, we have by Lemma 2 that
+P
+
+4γ(1−β)
+G
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+4,i,θt+1
+i ⟩
+
+≥
+√
+2(1 +b 1)
+√
+K∑
+t=0
+∑
+i∈G
+16γ2
+G2 σ2·
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT)
+)2
+
+
+≤exp(− b2
+1/3) = α
+20(T+ 1) ,
+47
+Using the restrictions12Lγ≤βand ˆβ≤min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa
+}
+we get
+(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· 4γ
+Gσ
+(√
+4L∆ + 3
+2(Binit−τ+b) + ˆβa+ 4 ˆβ
+√
+2cδbyzˆa+3
+2
+√
+2cδbyz ˆβτT
+)
+≤(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· β
+3LGσ
+(√
+4L∆ + 3
+2(Binit−τ+b) +
+√
+L∆ +
+√
+L∆ + 3
+2
+√
+2cδbyz ˆβτT
+)
+= (
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· β
+3LGσ
+(
+4
+√
+L∆ + 3
+2(Binit−τ+b)
+)
++
+(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· β
+LGσ
+√
+2cδbyz ˆβτT
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)· β
+3L
+√
+G
+σ
+(
+4
+√
+L∆ + 3
+2(Binit−τ+b)
+)
++
+(1 +b 1)
+√
+(K+ 1)· 4
+29
+√
+cδbyzTL
+√
+G
+σ
+√
+cδbyz ˆβτT
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)· β
+3L
+√
+G
+σ
+(
+4
+√
+L∆ + 3
+2(Binit−τ+b)
+)
++ (1 +b 1)
+√
+(K+ 1) 4
+29L
+√
+G
+σ ˆβτ
+≤ ∆
+16 + ∆
+16 = ∆
+8,
+where we use the restrictionβ≤ 2
+29
+√
+cδbyzT and chooseβand ˆβsuch that
+β≤
+
+ 3L∆
+√
+G
+16
+√
+2(1 +b 1)σ
+√
+T
+(
+4
+√
+L∆ + 3
+2(Binit−τ+b)
+)
+
+, ˆβ≤
+(
+29L∆
+√
+G
+64(1 +b 1)σ
+√
+T
+)
+,(77)
+andK+ 1≤T.
+This implies
+P
+
+4γ(1−β)
+G
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+4,i,θt+1
+i ⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1) .
+Note that the worst dependency in the choice ofβandˆβw.r.t.Tis ˜O(1/T1/2).
+Bound of the term⑧.The bound in this case is similar to the previous one. Let
+σ2
+8 := 16L2γ4
+G2 ·
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·σ 2.
+Then we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+1
+σ2
+8
+16γ2
+G2 (1−β) 2⟨ζl
+5,θl+1
+i ⟩2
+⏐⏐⏐⏐⏐
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+8
+16γ2
+G2 ∥ζl
+5∥2·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+≤E
+[
+exp
+(
+1
+σ2
+8
+16γ2
+G2 L2γ2
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+
+5
+√
+2cδbyz ˆβτT
+)
+·∥θl+1
+i ∥2
+)2
+|l,i−1
+]
+.
+48
+Sinceθ l+1
+i is sub-Gaussian with parameterσ2, then we can continue the chain of inequalities above
+using the definition ofσ2
+8
+E
+
+exp
+
+
+[
+16L2γ4
+G2 ·
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·σ 2
+]−1
+·
+16L2γ4
+G2 ·
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+·∥θl+1
+i ∥2
+)
+|l,i−1
+]
+=E
+[
+exp
+(
+∥θl+1
+i ∥2
+σ2
+)]
+≤exp(1).
+Therefore, we have by Lemma 2 that
+Pr
+
+4γ(1−β)
+G
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+5,i,θt+1⟩
+
+≥(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+∑
+i∈G
+16L2γ4
+G2 σ2
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+ 5
+√
+2cδbyz ˆβτT
+)2
+
+
+≤exp(− b2
+1/3) = α
+20(T+ 1) .
+Using the restrictions12Lγ≤βand ˆβ≤min
+{√
+L∆
+a ,
+√
+L∆
+4
+√
+2cδbyzˆa
+}
+we get
+(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· 4Lγ2
+G σ
+(√
+64L∆ + 3(Binit−τ+b) + 3 ˆβa+ 3
+√
+2cδbyz ˆβˆa+ 5
+√
+2cδbyz ˆβτT
+)
+≤(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· β2σ
+36LG
+(
+8
+√
+L∆ + 3(Binit−τ) + 3b+ 3
+√
+L∆ + 3
+4
+√
+L∆ + 5
+√
+2cδbyz ˆβτT
+)
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)G· β2σ
+36LG
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
++
+(1 +b 1)
+√
+(K+ 1)G· 5β2σ
+18LG
+√
+cδbyz ˆβτT
+≤(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)G· β2σ
+36LG
+(
+8
+√
+L∆ + 3(Binit−τ) + 3b+ 3
+√
+L∆ + 3
+4
+√
+L∆ + 5
+√
+2cδbyz ˆβτT
+)
+≤
+√
+2(1 +b 1)
+√
+(K+ 1)G· β2σ
+36LG
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
++
+(1 +b 1)
+√
+(K+ 1)G· 64·5τ 2σ ˆβ2
+4312·18L 2∆G
+√
+cδbyz ˆβτT
+≤ ∆
+16 + ∆
+16 = ∆
+8
+because we chooseβand ˆβsuch that
+β≤
+
+ 9L∆
+√
+G
+4
+√
+2(1 +b 1)σ
+√
+T
+(
+12
+√
+L∆ + 3(Binit−τ+b)
+)
+
+
+1/2
+, ˆβ≤
+(
+462·(L∆) 2√
+G
+(1 +b 1)σT 3/2τ 3
+)1/2
+(78)
+andK+ 1≤T.
+This implies
+P
+
+4γ(1−β)
+
+K∑
+t=0
+∑
+i∈G
+⟨ζt
+5,i,θt+1⟩
+
+≥ ∆
+8
+
+≤ α
+20(T+ 1) .
+Note that the worst dependency in the choice ofβandˆβw.r.tTis ˜O(1/T3/4).
+49
+Bound of the term⑨.We need to choose hyperparameters such that
+τ ˆβ3a2K
+324L
+√
+L∆
+≤ ∆
+24.
+This is possible by choosingˆβsuch that
+ˆβ≤
+(
+27(L∆)3/2
+2a2Tτ
+)1/3
+andK≤T+ 1.(79)
+Note that sincea∼Twe obtain ˆβ∼ 1
+T.
+Bound of the term⑩.We need to choose hyperparameters such that
+2τ ˆβ3cδbyzˆa2K
+81L
+√
+L∆
++ 2τ 3 ˆβ3cδbyzT 2K
+81L
+√
+L∆
+≤ ∆
+24.
+By choosing ˆβsuch that
+ˆβ≤min
+
+
+
+(
+81(L∆)3/2
+96cδbyzˆa2τT
+)1/3
+,
+(
+81(L∆)3/2
+96cδbyzτ 3T 3
+)1/3
+
+,andK≤T+ 1(80)
+we have
+2τ ˆβ3cδbyzˆa2K
+81L
+√
+L∆
++ 2τ 3 ˆβ3cδbyzT 2K
+81L
+√
+L∆
+≤ ∆
+48 + ∆
+48 = ∆
+24.
+Final probability.Therefore, the probability event
+Ω :=E K∩ΘK+1∩
+(
+∩i∈GΘK+1
+i
+)
+∩NK+1∩
+(
+∩i∈GNK+1
+i
+)
+∩E①∩E②∩E③∩E④∩E⑤∩E⑥∩E⑦∩E⑧∩E⑨∩E⑩,
+where eachE①-E⑩ denotes that each of2-8-th terms is smaller than∆
+8 and each of the terms1,9,10
+is smaller than ∆
+24. This implies that
+①+②+③+④+⑤+⑥+⑦+⑧+⑨+⑩≤7· ∆
+8 + 3· ∆
+24 = ∆,
+i.e., condition7in the induction assumption holds. Moreover, this also implies that
+ΦK+1≤Φ 0 + ∆≤∆ + ∆ = 2∆,
+i.e., condition6in the induction assumption holds. The probabilityP(EK+1)can be lower bounded
+as follows
+P(EK+1)≥P(Ω)
+=P
+(
+EK∩ ΘK+1∩
+(
+∩i∈GΘK+1
+i
+)
+∩NK+1∩
+(
+∩i∈GNK+1
+i
+)
+∩E ①∩E ②∩E ③∩E ④∩E ⑤∩E ⑥
+∩E ⑦∩E ⑧∩E ⑨∩E ⑩
+)
+= 1−P
+(
+EK∪ΘK+1∪
+(
+∪i∈GΘK+1
+i
+)
+∪N K+1
+(
+∪i∈GNK+1
+i
+)
+∪E①∪E②∪E③∪E④∪E⑤∪E⑥
+∪E⑦∪E⑧∪E⑨∪E⑩
+)
+≥1−P( EK)−P(Θ K+1)−
+∑
+i∈G
+P(ΘK+1
+i )−P(N K+1)−
+∑
+i∈G
+P(NK+1
+i )−P( E①)−P( E②)
+−P(E③)−P( E④)−P( E⑤)−P( E⑥)−P( E⑦)−P( E⑧)−P( E⑨)−P( E⑩)
+≥1− α(K+ 1)
+T+ 1 − α
+8(T+ 1) −
+∑
+i∈G
+α
+8G(T+ 1) − α
+8(T+ 1) −0−10· α
+20(T+ 1)
+= 1− α(K+ 2)
+T+ 1 .
+50
+This finalizes the transition step of induction. The result of the theorem follows by setting
+K=T−1. Indeed, from (70) we obtain
+γ
+2
+K∑
+t=0
+∥∇f(xt)∥2≤Φ 0−ΦK+1 + ∆≤2∆⇒ 1
+T
+T−1∑
+t=0
+∥∇f(xt)∥2≤ 4∆
+γT.(81)
+Final rate.We highlight that we are interested in the functional dependency of the rate on
+the problem constants. Therefore, in the rest of the proof we omit using numerical constants.
+Translating momentum restrictions (71), (72), (73), (74), (75), (77), (76), and (78) to the step-size
+restriction using12Lγ=βequality we get that the step-size should satisfy
+γ= 1
+L
+˜O
+
+
+min
+
+
+
+(L∆G
+Tσ 2
+)1/2
+,
+(
+L∆ ˆβ2η2
+Tσ 2
+)1/4
+,
+(
+L∆ ˆβη
+Tσ 2
+)1/3
+  
+from term1(71)
+,
+(
+L∆
+√
+G ˆβη
+Binitσ
+√
+T
+)1/2
+  
+from term2(72)
+,
+(
+L∆
+√
+G ˆβη
+σ(
+√
+L∆ +B init +σ)
+√
+T
+) 1
+3
+,
+(
+L∆
+√
+Gη
+σ
+√
+cδbyzτT 3/2
+) 1
+3
+  
+from term3(73)
+,
+(
+L∆ ˆβη
+√
+G
+σ(
+√
+L∆ +B init +σ)
+√
+T
+)1/4
+,
+(
+L∆η
+√
+G
+σ
+√
+cδbyzT 3/2τ
+)1/4
+  
+from term4(74)
+,
+(
+L∆ ˆβ2η2√
+G
+σ(
+√
+L∆ +B init +σ)
+√
+T
+)1/3
+,
+(
+L∆ ˆβη2√
+G
+σT 3/2√
+cδbyzτ
+)1/3
+  
+from term5(75)
+,
+(
+L∆ ˆβ2η2√
+G
+σ(
+√
+L∆ +B init +σ)
+√
+T
+)1/4
+,
+(
+L∆ ˆβη2√
+G√
+cδbyzστT 3/2
+)1/4
+  
+from term7(76)
+,
+(
+L∆
+√
+G
+σ(
+√
+L∆ +B init +σ)
+√
+T
+)
+  
+from term6(77)
+,
+(
+L∆
+√
+G
+σ(
+√
+L∆ +B init +σ)
+√
+T
+) 1
+2
+  
+from term8(78)
+
+
+
+
+
+,(82)
+and
+ˆβ≤ ˜O
+
+
+(
+L∆
+√
+G
+σ
+√
+T
+)
+ 
+from term 6 (77)
+,
+(
+(L∆)2√
+G
+σT 3/2τ 3
+)1/2
+  
+from term 8 (78)
+,
+√
+L∆
+a2/3T 1/3τ 1/3
+ 
+from term 9 (79)
+,
+√
+L∆
+(cδbyz)1/3ˆa2/3τ 1/3T 1/3,
+√
+L∆
+(cδbyz)1/3Tτ  
+from term 10 (80)
+
+
+.
+To guarantee the convergence to the neighborhood, we should chooseˆβ∼ 1
+a∼ 1
+T. Therefore, the
+first two restrictions onˆβwill not contribute to the size of the neighborhood. Moreover, the worst
+power ofTin (82) comes from the term⑤and equalsγ∼ 1
+T 5/6.The second worst comes from
+terms①and②, and equals toγ∼ 1
+T 3/4. These terms give the rate of the form
+L∆
+T
+˜O
+
+
+(
+Tσ 2
+L∆ ˆβ2η2
+)1/4
++
+(
+Binitσ
+√
+T
+L∆
+√
+G ˆβη
+)1/2
++
+(
+σ(
+√
+L∆ +B init +σ)
+√
+T
+L∆
+√
+G ˆβ2η2
+)1/3
++
+(
+σ
+√
+cδbyzτT 3/2
+L∆
+√
+G ˆβη
+)1/3
+.
+(83)
+Now we need to plug in all restrictions onˆβin (83). We remind that in total we should satisfy
+(up to numerical constants)
+ˆβ≤
+√
+L∆· ˜O
+(
+min
+{
+1
+a, 1√
+cδbyzˆa, 1
+a2/3T 1/3τ 1/3, 1
+(cδbyz)1/3ˆa2/3τ 1/3T 1/3, 1
+(cδbyz)1/3τT
+})
+.
+51
+We can simplify this constraint to
+ˆβ≤
+√
+L∆· ˜O
+(
+min
+{
+1
+aC, 1
+a2/3T 1/3τ 1/3, 1
+(cδbyz)1/3ˆa2/3τ 1/3T 1/3, 1
+(cδbyz)1/3τT ,
+})
+,(84)
+whereC := (1 +
+√
+G
+√
+cδbyz). Let us do this one by one.
+1. ˆβ∼
+√
+L∆
+aC , wherea∼ ˜O(
+√
+dσω
+√
+T/
+√
+G), gives the term in the rate of the form
+L∆
+T
+˜O
+
+
+(
+Tσ 2
+L∆ ˆβ2η2
+)1/4
++
+(
+Binitσ
+√
+T
+L∆
+√
+G ˆβη
+)1/2
++
+(
+σ(
+√
+L∆ +B init +σ)
+√
+T
+L∆
+√
+G ˆβ2η2
+)1/3
++
+(
+σ
+√
+cδbyzτT 3/2
+L∆
+√
+G ˆβη
+)1/3
+
+= L∆
+T
+˜O
+
+
+(
+B2
+initC2a2Tσ 2
+(L∆)2τ 2
+)1/4
++
+(
+B2
+initCaσT 1/2
+(L∆)3/2√
+Gτ
+)1/2
++
+(
+B2
+initC2a2σ(
+√
+L∆ +B init +σ)
+√
+T
+(L∆)2√
+Gτ 2
+)1/3
++
+(
+BinitCaσ
+√
+cδbyzT 3/2
+(L∆)3/2√
+G
+)1/3
+
+= ˜O
+
+
+(
+(L∆)2B2
+initC2a2σ2
+T 3τ 2
+)1/4
++
+(√
+L∆B2
+initCaσ
+T 1/2√
+Gτ
+)1/2
++
+(
+L∆B2
+initC2a2σ(
+√
+L∆ +B init +σ)
+T 5/2√
+Gτ 2
+)1/3
++
+(
+(L∆)3/2BinitCaσ
+√
+cδbyz√
+GT 3/2
+)1/3
+.
+Now we use the specific form ofa∼
+√
+dσω
+√
+T/
+√
+Gto obtain the rate
+˜O
+
+
+(
+(L∆)2B2
+initC2dσ2
+ωσ2
+GT 2τ 2
+)1/4
++
+(√
+L∆B2
+initC
+√
+dσωσ
+Gτ
+)1/2
++
+(
+L∆B2
+initC2dσ2
+ωσ(
+√
+L∆ +B init +σ)
+(TG) 3/2τ 2
+)1/3
++
+(
+(L∆)3/2BinitC
+√
+dσωσ
+√
+cδbyzτ
+TGτ
+)1/3
+.
+(85)
+Sinceσ ω∼
+√
+T, we omit the first two terms in (85) as they have better dependency onT.
+The final rate in this regime is
+˜O
+
+
+(
+L∆B2
+initC2dσ2
+ωσ(
+√
+L∆ +B init +σ)
+(TG) 3/2τ 2
+)1/3
++
+(
+(L∆)3/2BinitC
+√
+dσωσ
+√
+cδbyzτ
+TGτ
+)1/3
+.
+(86)
+2. ˆβ∼
+√
+L∆
+C1a2/3T 1/3τ 1/3, whereC 1 = 1 +G1/3(cδbyz)1/3 (we combine cases 2 and 3 in (84) together
+to simplify calculations). We obtain
+L∆
+T
+˜O
+
+
+(
+Tσ 2
+L∆ ˆβ2η2
+)1/4
++
+(
+Binitσ
+√
+T
+L∆
+√
+G ˆβη
+)1/2
++
+(
+σ(
+√
+L∆ +B init +σ)
+√
+T
+L∆
+√
+G ˆβ2η2
+)1/3
++
+(
+σ
+√
+cδbyzτT 3/2
+L∆
+√
+G ˆβη
+)1/3
+
+= ˜O
+
+
+(
+(L∆)2B2
+initC2
+1a4/3σ2
+T 7/3τ 4/3
+)1/4
++
+(√
+L∆B2
+initC1a2/3σ
+T 7/6√
+Gτ 2/3
+)1/2
++
+(
+L∆B2
+initC2
+1a4/3σ(
+√
+L∆ +B init +σ)
+T 11/6√
+Gτ 4/3
+)1/3
++
+(
+(L∆)3/2BinitC1a2/3σ
+√
+cδbyzτ
+T 7/6√
+Gτ 2/3
+)1/3
+.
+52
+Now we use the specific form ofa∼
+√
+dσω
+√
+T/
+√
+Gto obtain the rate
+˜O
+
+
+(
+(L∆)2B2
+initC2
+1d2/3σ4/3
+ω σ2
+G2/3T 5/3τ 4/3
+)1/4
++
+(√
+L∆B2
+initC1d1/3σ2/3
+ω σ
+(GT) 5/6τ 2/3
+)1/2
+(87)
++
+(
+L∆B2
+initC2
+1d2/3σ4/3
+ω σ(
+√
+L∆ +B init +σ)
+(TG) 7/6τ 4/3
+)1/3
++
+(
+(L∆)3/2BinitC1d1/3σ2/3
+ω σ
+√
+cδbyzτ
+(GT) 5/6τ 2/3
+)1/3
+.
+Sinceσ ω∼
+√
+T, then the first term in (87) has better dependency onTthan the other two,
+therefore we omit them. The final rate in this case is
+˜O
+
+
+(
+L∆B2
+initC2
+1d2/3σ4/3
+ω σ(
+√
+L∆ +B init +σ)
+(TG) 7/6τ 4/3
+)1/3
++
+(
+(L∆)3/2BinitCd1/3σ2/3
+ω σ
+√
+cδbyzτ
+(GT) 5/6τ 2/3
+)1/3
+.
+(88)
+3. ˆβ∼
+√
+L∆
+(cδbyz)1/3τT , gives the term in the rate of the form
+L∆
+T
+˜O
+
+
+(
+Tσ 2
+L∆ ˆβ2η2
+)1/4
++
+(
+Binitσ
+√
+T
+L∆
+√
+G ˆβη
+)1/2
++
+(
+σ(
+√
+L∆ +B init +σ)
+√
+T
+L∆
+√
+G ˆβ2η2
+)1/3
++
+(
+σ
+√
+cδbyzτT 3/2
+L∆
+√
+G ˆβη
+)1/3
+
+= ˜O
+
+
+(
+(L∆)2(cδbyz)2/3B2
+initσ2
+T
+)1/4
++
+(
+(L∆)1/2B2
+init(cδbyz)1/3σ√
+GT
+)1/2
++
+(
+L∆B2
+init(cδbyz)2/3σ(
+√
+L∆ +B init +σ)√
+TG
+)1/3
++
+(
+(cδbyz)5/6(L∆)3/2Binitστ√
+TG
+)1/3
+.
+We keep only the last two terms, since they have the worst dependence onT. Therefore, the
+final rate in this case is
+˜O
+
+
+(
+L∆B2
+initσ(
+√
+L∆ +B init +σ)√
+TG
+)1/3
++
+(√
+cδbyz(L∆)3/2Binitστ√
+TG
+)1/3
+.(89)
+We observe that, in all three cases above, we still have descent withT. Therefore, those terms
+do not contribute to the utility bound. Now we should consider the momentum constraints (a)-(d)
+that can be combined into one as
+β≤ ˜O
+(
+min
+{ ˆβτ√
+L∆ +B init +σ
+, 1√
+cδbyzT
+})
+.
+This translates into the rate of the form
+˜O
+(
+L∆(
+√
+L∆ +B init +σ)
+T ˆβτ
++L∆
+√
+cδbyz
+)
+.
+We should plug in the restrictions (84) in the rate above. This leads to the rate of the form
+˜O
+(
+L∆aC(
+√
+L∆ +B init +σ)
+T
+√
+L∆τ
++ L∆C1a2/3T 1/3τ 1/3(
+√
+L∆ +B init +σ)
+T
+√
+L∆τ
++ L∆τT(
+√
+L∆ +B init +σ)
+T
+√
+L∆τ
++L∆
+√
+cδbyz
+)
+= ˜O
+(√
+L∆aC(
+√
+L∆ +B init +σ)
+Tτ +
+√
+L∆C1a2/3(
+√
+L∆ +B init +σ)
+T 2/3τ 2/3
++
+√
+L∆(
+√
+L∆ +B init +σ)((cδ byz)1/3 +
+√
+cδbyz)
+)
+.
+53
+Now we usea∼
+√
+dσω
+√
+T√
+G ,C= (1 +
+√
+G), andC 1 = (1 +G 1/3(cδbyz)1/3)to obtain the rate
+(
+√
+L∆ +B init +σ)· ˜O
+(√
+L∆
+√
+dσωC√
+GTτ
++
+√
+L∆C1d1/3σ2/3
+ω
+(TG) 1/3τ 2/3 +
+√
+L∆((cδbyz)1/3 +
+√
+cδbyz)
+)
+= (
+√
+L∆ +B init +σ)· ˜O
+(√
+L∆
+√
+dσω(1 +
+√
+cδbyzG)√
+GTτ
++
+√
+L∆(1 + (cδbyzG)1/3)d1/3σ2/3
+ω
+(TG) 1/3τ 2/3
++
+√
+L∆((cδbyz)1/3 +
+√
+cδbyz)
+)
+= (
+√
+L∆ +B init +σ) ˜O
+
+
+√
+L∆dσω√
+GTτ
++
+√
+L∆d1/3σ2/3
+ω
+(TG) 1/3τ 2/3 +
+√
+cδbyzL∆dσω
+√
+Tτ
++
+√
+L∆(cδbyzdσ2
+ω)1/3
+T 1/3τ 2/3
++
+√
+L∆((cδbyz)1/3 +
+√
+cδbyz)
+)
+.
+We can combine the terms above in a simpler way as follows
+(
+√
+L∆ +B init +σ)
+√
+L∆˜O
+
+
+(√
+dσω√
+GTτ
++
+√
+cδbyzdσω√
+Tτ
++
+√
+cδbyz
+)
++
+(√
+dσω√
+GTτ
++
+√
+cδbyzdσω√
+Tτ
++
+√
+cδbyz
+)2/3
+.
+We observe that the first term is purely due to DP noise, the middle term is a mix of DP noise and
+robust aggregation, and the last term is purely due to robust aggregation.
+Finally, the restriction (68) translate to
+γ≤ 1
+L
+˜O
+
+ ˆβτ
+LBinit
+,
+√
+ˆβτ
+L√Binit
+
+.(90)
+Note that the second restriction in (90) does not contribute to the neighborhood. The first restric-
+tion in (90) is already taken into account by the restrictionβ≤˜O
+( ˆβτ√
+L∆+Binit+σ
+)
+.
+CaseI K+1 = 0.This case is even easier. The only change will be with the term next toRt. We
+will get
+1− 96L2
+ˆβ2η2γ2− 24L2
+β2 γ2≥ 1
+3− 96L2
+ˆβ2η2γ2≥0
+instead of
+1− 32β2L2
+ˆβ2η2 γ2− 96L2
+ˆβ2η2γ2− 24L2
+β2 γ2≥0
+as in the previous case. This difference comes from Lemma 11 because˜VK+1 = 0. The rest is a
+repetition of the previous derivations.
+Bounds on∆,B init, and∆ 0.It remains to give explicit bounds on∆andB init using problem-
+dependent constants. With the initializationv0
+i =g 0
+i = 0for alli∈Gwe have that
+Φ0 =f(x 0)−f ⋆ + 8γβ
+ˆβ2η2
+1
+G
+∑
+i∈G
+∥∇fi(x0)∥2+2γ
+β∥∇f(x 0)∥2
+(i)
+≤f(x 0)−f ⋆ + 8γβ
+ˆβ2η2Bζ∥∇f(x 0)∥2+ 8γβ
+ˆβ2η2ζ2 + 4γ
+β L(f(x 0)−f ⋆)
+(ii)
+≤
+(
+1 + 16Lγβ
+ˆβ2η2 Bζ + 4Lγ
+β
+)
+(f(x 0)−f ⋆) + 8γβ
+ˆβ2η2ζ2.(91)
+where(i)follow from Assumption 3.3a andL-smoothness,(ii)– fromL-smoothness. Note that we
+chooseβ= 12Lγ, which implies that 4Lγ
+β = 1
+3, and from (68) we have
+8γβ
+ˆβ2η2 = 96Lγ2
+ˆβ2η2 ≤96L· 5
+6·96L 2 = 5
+6L.
+54
+Thus, we have the bound onΦ0 from (91)
+Φ0≤
+(
+4/3+ 5
+3Bζ
+)
+(f(x 0)−f ⋆) + 5
+6Lζ2.
+Therefore, we have that
+L∆ =O
+(
+(1 +Bζ)L(f(x 0)−f ⋆) +ζ 2
+)
+=O
+(
+(1 +Bζ)LF 0 +ζ 2
+)
+Next, we boundBinit = max{3τ,max i∈G∥∇fi(x0)∥+b}>τ. Note that in the theorem, we assume
+thatmax i∈G∥∇fi(x0)∥≥3τ. This implies thatB init = maxi∈G∥∇fi(x0)∥+b. Therefore, we provide
+the bound with high probability as follows
+Binit =b+ max
+i∈G
+∥∇fi(x0)∥
+= ˜O
+(
+σ+ max
+i∈G
+∥∇fi(x0)−∇f(x 0)∥+∥∇f(x 0)∥
+)
+= ˜O
+(
+σ+
+√
+BζLF 0 +ζ+
+√
+LF 0
+)
+.
+where we again use Assumption 3.3a andL-smoothness. This allows to bound∆0 as follows
+∆0 =
+√
+L∆
+(√
+L∆ +B init +σ
+)
+= ˜O
+(
+(1 +
+√
+Bζ)(
+√
+LF 0 +ζ)(σ+ (1 +
+√
+Bζ)
+√
+LF 0 +ζ)
+)
+= ˜O
+(
+(1 +Bζ)LF 0 +ζ 2 +σ((1 +
+√
+Bζ)
+√
+LF 0 +ζ)
+)
+.
+Theorem D.2(Theorem 3.22 in [Dwork et al., 2014]).Letε∈(0,1)be arbitrary. Forc 2 >
+2 log(1.25/δ), the Gaussian mechanism with parameterσω≥c∆ 2(f)/εis(ε,δ)-differentially pri-
+vate.
+CorollaryD.1.Under the setup of Theorem 5.1 (Theorem D.1), if we setσω = Θ
+(
+τ
+ε
+√
+Tlog( T
+δ ) log(1
+δ )
+)
+for someε,δ∈(0,1), then each iteration ofByz-Clip21-SGD2Msatisfies local(ε,δ)-DP.
+Proof.We need to plug in the choice ofσω to Theorem D.1 and omit all terms that decay withT.
+Note that each step ofByz-Clip21-SGD2Msatisfies( ˜ε,˜δ)-local DP where
+˜ε= ε
+2
+√
+2Tlog 1
+δ
+, ˜δ= δ
+T,
+by Theorem D.2. Combining the above result with advanced composition theorem ([Dwork et al.,
+2014, Theorem 3.20]), we obtain that allTiterations ofByz-Clip21-SGD2Msatisfy local(ε,δ)-
+differentially private.
+E Proofs in Special Cases
+E.1 Convergence in the Absence of Both DP and Byzantine Adversaries
+Corollary E.1(Full statement of Corollary 5.2).Let Assumptions 3.1, 3.2, and 3.3a and define
+Binit := max{3τ,max i{∥∇fi(x0)∥}+b}. Let the failure probabilityαbe such thatα∈(0,1), and
+constantsbandˆcbe defined as in (67), and∆≥Φ 0 forΦ 0 defined in(9). Consider the run
+ofByz-Clip21-SGD2M(Algorithm 1) forTiterations with no DP and Byzantine adversaries, i.e.,
+σω = 0andδ byz = 0. Assume the following inequalities hold
+1.step-size restrictions:
+55
+(a)γ≤ 1
+24L;
+(b)12Lγ=β;
+(c)
+5
+6− 32L2β2
+ˆβ2η2 γ2− 96L2
+ˆβ2η2γ2≥0.(92)
+2.momentum restrictions:
+(a) ˆβ= 1;
+(b)β≤min
+{
+8τ
+431
+√
+L∆,1
+}
+;
+(c)β≤min
+{
+2τ
+39(Binit−τ),1
+}
+;
+(d)β≤min
+{
+2τ
+69b,1
+}
+;
+(e) and momentum restrictions defined in (71), (72), (73), (74), (75), (77), (76), (78),
+(79), and (80) withˆβ= 1,a,ˆa= 0,δ byz = 0;
+Then, with probability1−α, we bound 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 with
+˜O
+(
+L∆(1 +Binit/τ)
+T + σ(
+√
+L∆ +B init +σ)√
+TG
+)
+,
+where ˜Ohides constant and logarithmic factors and higher order terms decreasing inT.
+Proof.In the case, when ˆβ= 1the worst dependency in (82) w.r.t.Tcomes from the terms①,
+③,⑤,and⑥, and equalsγ∼ 1
+T 1/2. We also have restrictionγ≤O( 1/L)and (90). All of those
+restrictions give the rate of the form
+L∆
+T
+˜O
+
+1 +Binit
+τ +
+√Binit√τ +
+(
+Tσ 2
+L∆G
+)1/2
++ σ(
+√
+L∆ +B init +σ)T 1/2
+L∆
+√
+G
+
+
+= ˜O
+(
+L∆(1 +Binit/τ)
+T + σ
+√
+L∆√
+TG
++ σ(
+√
+L∆ +B init +σ)√
+TG
+)
+= ˜O
+(
+L∆(1 +Binit/τ)
+T + σ(
+√
+L∆ +B init +σ)√
+TG
+)
+,(93)
+where we hide all logarithmic factors in the˜Onotation.
+E.2 Convergence in the Absence of Byzantine Adversaries
+Corollary E.2(Full statement of Corollary 5.3).Let Assumptions 3.1, 3.2, and 3.3a and define
+Binit := max{3τ,max i{∥∇fi(x0)∥}+b}. Let the failure probabilityαbe such thatα∈(0,1), and
+constantsa,ˆa,b,andˆcbe defined as in (67), and∆≥Φ 0 forΦ 0 defined in(9). Consider the
+run ofByz-Clip21-SGD2M(Algorithm 1) forTiterations with DP noise varianceσ ω andδ byz = 0.
+Assume the following inequalities hold
+1.step-size restrictions:
+(a)γ≤ 1
+24L;
+(b)12Lγ=β;
+(c)
+5
+6− 32L2β2
+ˆβ2η2 γ2− 96L2
+ˆβ2η2γ2≥0.(94)
+2.momentum restrictions:
+56
+Algorithm 2Byz-Clip21-SGD2Mwithout DP adversaries
+1:Input:x 0∈X,momentum parameterβ∈(0,1],step-sizeγ >0
+2:fort= 0,...,T−1do
+3:x t+1 =x t−γg t
+4:fori∈Gdo
+5:v t+1
+i = (1−β)v t
+i +β∇f i(xt+1,ξt+1
+i )
+6:end for
+7:fori∈Bdo
+8:v t+1
+i = (∗)sends arbitrary vector
+9:end for
+10:g t+1 = RAgg(vt+1
+1 ,...,v t+1
+n )
+11:end for
+(a)β≤min
+{
+8ˆβτ
+431
+√
+L∆,1
+}
+;
+(b)β≤min
+{
+2ˆβτ
+39(Binit−τ),1
+}
+;
+(c)β≤min
+{
+2ˆβτ
+69b,1
+}
+;
+(d) ˆβ∈min
+{√
+L∆
+a ,1
+}
+;
+(e) and momentum restrictions defined in (71), (72), (73), (74), (75), (77), (76), (78),
+(79), and (80) withδbyz = 0;
+Then, with probability1−α, we bound 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 with
+√
+L∆(
+√
+L∆ +B init +σ) ˜O
+(√
+dσω√
+GTτ
++ d1/3σ2/3
+ω
+(TG) 1/3τ 2/3
+)
+,
+where ˜Ohides constant and logarithmic factors and higher order terms decreasing inT.
+Proof.We should simply setδ byz = 0in the convergence proof of Theorem 5.1 (Theorem D.1) to
+obtain the necessary result.
+E.3 Convergence in the Absence of DP Adversaries
+In this setting, server-side momentum and clipping are unnecessary. We thus focus on the special-
+ization ofByz-Clip21-SGD2Mwith ˆβ= 1andτ= +∞, shown in Algorithm 2. Under these settings,
+the method reduces to the algorithm of Karimireddy et al. [2020]. In particular, the error-feedback
+mechanism is disabled, so the server does not storegt
+i. The analysis correspondingly simplifies and
+only requires a simpler Lyapunov function
+˜Φt :=δ t + γ
+β∥vt−∇f(x t)∥2.(95)
+Also, constantsbandcfrom (67)shouldbeadjustedaccordingly. Wemakeuseoftheirreplacements
+˜band ˜cdefined as
+˜b2 := 2σ2 log
+(8(T+ 1)G
+α
+)
+,˜c 2 :=
+
+√
+2 + 2
+√
+3 log 8(T+ 1)
+α
+
+
+2
+σ2,
+˜z2 :=
+
+√
+2 + 2
+√
+3 log 8G(T+ 1)
+α
+
+
+2
+σ2.(96)
+57
+E.3.1 Useful Lemmas
+We will need to re-derive several descent lemmas as well as introduce new ones.
+Lemma 12.Let{v t
+i}be generated by Algorithm 2. Then we have with probability at least1−α
+8(T+1)
+1
+G
+∑
+i∈G
+∥vt−v t
+i∥2≤2ζ 2 + 2β˜z2.
+Proof.We have
+1
+G
+∑
+i∈G
+vt
+i−vt
+
+2 (i)
+= 1
+G
+∑
+i∈G
+∥(1−β)(v t−1
+i −vt−1) +β(∇fi(xt)−∇f(x t)) +β(θt
+i−θt)∥2
+(ii)
+= 1
+G
+β
+t∑
+k=0
+(1−β) t−k(∇fi(xk)−∇f(x k)) +β
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+
+2
+(iii)
+≤ 2
+G
+∑
+i∈G
+β
+t∑
+k=0
+(1−β) t−k(∇fi(xk)−∇f(x k))
+
+2
++ 2β2
+G
+
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+
+2
+(iv)
+≤ 2(1−(1−β) t+1)
+G
+∑
+i∈G
+t∑
+k=0
+β(1−β) t−k∥∇fi(xk)−∇f(x k)∥2
++ 2β2
+G
+∑
+i∈G
+
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+
+2
+,
+(v)
+≤2
+t∑
+k=0
+β(1−β) t−kζ2 + 2β2
+G
+∑
+i∈G
+
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+
+2
+≤2ζ 2 + 2β2
+G
+∑
+i∈G
+
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+
+2
+,(97)
+where(i)– from the update rules ofvt
+i and decomposition∇fi(xt)+θt
+i =∇f i(xt,ξt
+i),(ii)– unrolling
+the recursion till the zero iteration and using the initialization with zeros,(iii)– from Young’s
+inequality,(iv)– from Jensen’s inequality,(v)– from Assumption 3.3a. For the second term in
+(97), we use Lemma 2. We know thatθk
+i−θ k is a zero-centered sub-Gaussian r.v. conditioned on
+all events before iterationk. Therefore, we have
+
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+
+2
+≤(
+√
+2 + 2u)
+√
+t∑
+k=0
+(1−β) 2(t−k)σ2≤(
+√
+2 + 2u) σ√β≤ ˜z√β,(98)
+whereu=
+√
+3 log 8G(T+1)
+α .Thus, we obtain with probability at least1−G· α
+8G(T+1) that
+1
+G
+∑
+i∈G
+∥vt
+i−vt∥2≤2ζ 2 + 2β˜z2.(99)
+Next, we re-derive the descent lemma for the function value.
+Lemma 13.LetfbeL-smooth, Assumption 3.3a hold withA= 0,F t :=f(x t)−f ⋆,{x t}be
+generated by Algorithm 2. Assume that
+1.γ≤ 1
+2L;
+2.∥θ t
+i∥≤˜b;
+3. 1
+G
+∑
+i∈G∥vt−1−v t−1
+i ∥2≤2ζ 2 + 2β˜z2;
+58
+Then we have
+f(xt+1)≤f(x t)− γ
+2∥∇f(xt)∥2− 1
+4γ∥xt+1−xt∥2+γ∥∇f(xt)− vt∥2+2cδbyzζ2 + 2cδbyzβ˜z2.(100)
+Proof.Using the derivations from [Islamov et al., 2025b], Lemma 2 we first get
+f(xt+1)≤f(x t)− γ
+2∥∇f(xt)∥2−γ
+4∥gt∥2+γ
+2∥∇f(xt)−g t∥2.
+We continue the derivations as follows
+f(xt+1)
+(i)
+≤f(x t)− γ
+2∥∇f(xt)∥2−γ
+4∥gt∥2+γ∥∇f(xt)− vt∥2+γ∥vt−g t∥2
+(ii)
+=f(x t)− γ
+2∥∇f(xt)∥2− 1
+4γ∥xt+1−xt∥2+γ∥∇f(xt)− vt∥2+γ∥vt−g t∥2,(101)
+where(i)follows from Jensen’s inequality applied to∥·∥ 2,(ii)— from the update rule ofx t. We
+bound the term∥vt−g t∥2 using properties of the aggregator.
+∥vt−g t∥2 =∥vt−RAgg(v t
+1,...,v t
+n)∥2
+≤ cδbyz
+G
+∑
+i∈G
+∥vt
+i−vt∥2
+(iii)
+≤2cδ byzζ2 + 2cδbyzβ˜z2.(102)
+where(iii)holds by Lemma 12. Plugging in (102) into (101), we obtain the statement of the
+lemma.
+Lemma 14.Let eachf i beL-smooth, and ˜∆≥Φ 0.Assume that the following inequalities hold for
+the iterates generated byByz-Clip21-SGD2M
+1.γ≤ 1
+6L,
+2.β∈[0,1],
+3.∥ vt−1∥≤
+√
+64L˜∆ + 3 ˜c√
+G + 3
+√
+2cδbyzζ+ 3√β
+√
+2cδbyz˜z,
+4.∥∇f(x t−1)− vt−1∥≤
+√
+4L˜∆ + 3
+2
+˜c√
+G + 3
+2
+√
+2cδbyzζ+ 3
+2
+√β
+√
+2cδbyz˜z,
+5.∥θ t∥≤ ˜c√
+G,
+6. 1
+G
+∑
+i∈G∥vt−1−v t−1
+i ∥2≤2cδ byzζ2 + 2cδbyzβ˜z2,
+7.Φ t−1≤2 ˜∆.
+Then we have
+∥vt∥≤
+√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z.(103)
+Proof.We start as follows
+∥vt∥
+(i)
+=∥(1−β) vt−1 +β∇f(x t,ξt)∥
+=∥(1−β)( vt−1−∇f(x t−1)) +β(∇f(x t)−∇f(x t−1)) +β(∇f(x t,ξt)−∇f(x t)) +∇f(x t−1)∥
+(ii)
+≤(1−β)∥ vt−1−∇f(x t−1)∥+βLγ∥gt−1∥+β∥θt∥+∥∇f(xt−1)∥.(104)
+59
+where(i)follows from the update rule ofvt,(ii)— from triangle inequality andL-smoothness. We
+continue the derivations as follows
+∥vt∥
+(iii)
+≤
+√
+2L(f(xt−1)−f ⋆) + (1−β)∥ vt−1−∇f(x t−1)∥+β ˜c√
+G
++βLγ∥ vt−1∥+βLγ∥vt−1−g t−1∥.
+(105)
+where(iii)follows fromL-smoothness, assumption 5 of the lemma, and triangle inequality. The
+term∥vt−1−gt−1∥can be bounded by
+√
+2cδbyzζ2 + 2cδbyzβ˜c2 by (102) and assumptions 5, 6 of the
+lemma. We continue further bounding as follows
+∥vt∥
+(iv)
+≤
+√
+4L˜∆ + (1−β)
+(√
+4L˜∆ + 3
+2
+˜c√
+G
++ 3
+2
+√
+2cδbyzζ+ 3
+2
+√
+2cδbyz
+√
+β˜z
+)
++β ˜c√
+G
++Lγβ
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)
++βLγ
+√
+2cδbyzζ+βLγ
+√
+2cδbyz
+√
+β˜z
+=
+√
+L˜∆(2 + 2(1−β) + 8Lγβ) + ˜c√
+G
+(3/2(1−β) +β+ 3Lγβ) +
+√
+2cδbyzζ(3/2(1−β) + 3Lγβ+βLγ)
++
+√
+2cδbyz
+√
+β˜z(3/2(1−β) + 3Lγβ+βLγ).(106)
+For the first coefficient preceding˜∆, we have
+2 + 2(1−β) + 8Lγβ≤8⇐1−β+ 4Lγβ≤3≤Lγβ≤1,
+where the last inequality holds by the choice ofβandγ. For the second coefficient preceding˜c√
+G,
+we have 3
+2(1−β) +β+ 3Lγβ≤3⇐4Lγβ≤ 3
+2(1 +β),
+where the last inequality holds by the choice ofβandγ. For the third coefficient preceding√
+2cδbyzζ, we have
+3
+2(1−β) + 3Lγβ+βLγ≤3⇐3Lγβ≤1,
+where the last inequality holds by the choice ofβandγ. For the fourth coefficient preceding√
+2cδbyz
+√β˜z, we have
+3
+2(1−β) + 3Lγβ+βLγ≤3⇐4Lγβ≤ 3
+2(1 +β),
+where the last inequality holds by the choice ofβandγ.
+Lemma 15.Let eachf i beL-smooth, ˜∆≥Φ 0. Assume that the following inequalities hold for the
+iterates generated byByz-Clip21-SGD2M
+1.γ≤ 1
+6L;
+2.4Lγ≤β;
+3.β∈[0,1];
+4. 1
+G
+∑
+i∈G∥vt−1
+i −vt−1∥2≤2cδ byzζ2 + 2cδbyzβ˜z2;
+5.∥ vt−1∥≤
+√
+64L˜∆ + 3 ˜c√
+G + 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√β˜z,
+6.∥∇f(x t−1)− vt−1∥≤
+√
+4L˜∆ + 3
+2
+˜c√
+G + 3
+2
+√
+2cδbyzζ+ 3
+2
+√
+2cδbyz
+√β˜z;
+7.∥θ t∥≤ ˜c√
+G;
+8.∥θ t
+i∥≤˜bfor alli∈G;
+60
+9.Φ t−1≤2 ˜∆.
+Then we have
+∥∇f(xt)− vt∥≤
+√
+4L˜∆ + 3
+2
+˜c√
+G
++ 3
+2
+√
+2cδbyzζ+ 3
+2
+√
+2cδbyz
+√
+β˜z.(107)
+Proof.We have
+∥∇f(xt)−v t∥
+(i)
+=∥∇f(x t)−(1−β) vt−1−β∇f i(xt,ξt)∥
+(ii)
+≤(1−β)∥∇f(x t)− vt−1∥+β∥∇f(xt)−∇f(x t,ξt)∥
+(iii)
+≤(1−β)∥∇f(x t)−∇f(x t−1)∥+(1−β)∥∇f(x t−1)− vt−1∥+β∥θt∥
+(iv)
+≤(1−β)Lγ∥g t−1∥+(1−β)∥∇f(x t−1)− vt−1∥+β∥θt∥
+(v)
+≤(1−β)Lγ∥ vt−1−g t−1∥+(1−β)Lγ∥ vt−1∥+(1−β)∥∇f(x t−1)− vt−1∥+β∥θt∥,
+(108)
+where(i)follows from the update rule ofvt,(ii)-(iii)— from the triangle inequality,(iv)— from
+the update rule ofxt andL-smoothness,(v)— from triangle inequality. We continue as follows
+∥∇f(xt)− vt∥
+(vi)
+≤
+√
+2cδbyz(1−β)Lγζ+
+√
+2cδbyz(1−β)Lγ
+√
+β˜z+ (1−β)Lγ∥vt−1∥+β∥θt∥
++ (1−β)∥∇f(x t−1)− vt−1∥
+(vii)
+≤
+√
+2cδbyz(1−β)Lγζ+
+√
+2cδbyz(1−β)Lγ
+√
+β˜z
++ (1−β)Lγ
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)
++β ˜c√
+G
++ (1−β)
+(√
+4L˜∆ + 3
+2
+˜c√
+G
++ 3
+2
+√
+2cδbyzζ+ 3
+2
+√
+2cδbyz
+√
+β˜z
+)
+=
+√
+L˜∆(8(1−β)Lγ+ 2(1−β)) + ˜c√
+G
+(3(1−β)Lγ+ 3/2(1−β))
++
+√
+2cδbyzζ((1−β)Lγ+ 3(1−β)Lγ+ 3/2(1−β))
++
+√
+2cδbyz
+√
+β˜z((1−β)Lγ+ 3(1−β)Lγ+ 3/2(1−β)).
+where(vi)follows from (102) and assumptions 4, 8 of the lemma,(vii)— from assumptions 5, 6,
+7 of the lemma.
+For the first coefficient preceding
+√
+L˜∆, we have
+8(1−β)Lγ+ 2(1−β)≤2⇐4Lγ≤β,
+where the last inequality holds by assumption 2 of the lemma. For the second coefficient preceding
+˜c√
+G, we have
+3(1−β)Lγ+ 3
+2(1−β)≤ 3
+2⇐2Lγ≤β,
+where the last inequality holds by assumption 2 of the lemma. For the third coefficient preceding√
+2cδbyzζ, we have
+4(1−β)Lγ+ 3
+2(1−β)≤ 3
+2⇐4Lγ≤ 3
+2β⇐ 8
+3Lγ≤β,
+where the last inequality holds by assumption 2 of the lemma. Finally, or the fourth coefficient
+preceding
+√
+2cδbyz
+√β˜z, we have
+4(1−β)Lγ+ 3
+2(1−β)≤ 3
+2⇐4Lγ≤ 3
+2β⇐ 8
+3Lγ≤β,
+where the last inequality holds by assumption 2 of the lemma. This finalizes the proof.
+61
+E.3.2 Main Convergence Theorem
+Theorem E.1(Full statement of Theorem 5.2).Let Assumptions 3.1, 3.2, and 3.3 hold. Let the
+failure probabilityα∈(0,1), and constants ˜band ˜cbe defined as in(96), and˜∆≥ ˜Φ0 for ˜Φ0 defined
+in(95). Consider the run ofByz-Clip21-SGD2Mwithσ ω = 0andτ= +∞(Algorithm 2) for T
+iterations. Assume that the following inequalities are satisfied
+1.γ≤ 1
+6L,
+2.β≥4Lγ,
+3. and momentum restrictions defined in(112),(113), and(114).
+Then, with probability at least1−α, we bound 1
+T
+∑T−1
+t=0∥∇f(xt)∥2 with
+˜O
+
+L˜∆
+T +
+(
+σ2L˜∆
+GT
+)1/2
++ σ(
+√
+L˜∆ +σ/
+√
+G+
+√
+cδbyzζ+
+√
+cδbyzσ)√
+GT
++cδ byzζ2
+
+,(109)
+where we can choose˜∆ = 2(f(x 0)−f ⋆) = 2F 0.
+Proof.For convenience, we define∇fi(x−1,ξ−1
+i ) =v −1
+i =g−1
+i = 0,Φ−1 = Φ0. Next, let us define
+an event˜Et for eacht∈{0,...,T}such that the following inequalities hold for allk∈{0,...,t}
+1. 1
+G
+∑
+i∈G∥vt−v t
+i∥≤2ζ 2 + 2β˜z2;
+2.∥θ k
+i∥≤bfor alli∈Gand∥θ k∥≤ ˜c√
+G;
+3.∥ vt−1∥≤
+√
+64L˜∆ + 3 ˜c√
+G + 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√β˜z,
+4.∥∇f(x t−1)− vt−1∥≤
+√
+4L˜∆ + 3
+2
+˜c√
+G + 3
+2
+√
+2cδbyzζ+ 3
+2
+√
+2cδbyz
+√β˜z;
+5. ˜Φk≤2 ˜∆;
+6.
+1
+2∆≥2γ(1−β)
+k−1∑
+l=0
+⟨∇f(xl)−∇f(x l+1),θl+1⟩.
+Then, we will derive the result by induction, i.e., using the induction w.r.t.t, we will show that
+P(˜Et)≥1− α(t+1)
+T+1 for allt∈{0,...,T−1}.
+Before moving on to the proof’s induction part, we need to establish several useful bounds.
+Denote the events˜Θt
+i and ˜Θt as
+˜Θt
+i :={∥θ t
+i∥≥˜b}, ˜Θt :=
+{
+∥θt∥≥ ˜c√
+G
+}
+, ˆΘt
+i :=
+{
+t∑
+k=0
+(1−β) t−k(θk
+i−θk)
+≥ ˜z√β
+}
+(110)
+respectively. From Assumption 3.2 we have
+P(˜Θt
+i)≤2 exp
+(
+−
+˜b2
+2σ2
+)
+= α
+8(T+ 1)G
+where the last equality is by definition of˜b2. Therefore,P( ˜Θ
+t
+i)≥1− α
+8G(T+1).Besides, notice that
+the constant˜cin (96) can be viewed as
+˜c2 = (
+√
+2 + 2˜b3)σ2 where ˜b2
+3 = 3 log 8(T+ 1)
+α .
+62
+Now, we can use Lemma 2 to boundP(˜Θt).Since allθ t
+i are independentσ-sub-Gaussian random
+vectors, then we have
+P
+
+
+
+∑
+i∈G
+θt
+i
+
+≥˜c
+√
+G
+
+ =P
+(
+∥θt∥≥ ˜c√
+G
+)
+≤exp(−˜b2
+3/3) = α
+8(T+ 1) .
+The boundP( ˆΘt
+i)≤ α
+6G(T+1) was shown before in Lemma 12.
+Now, we are ready to prove thatP(˜Et)≥1− α(t+1)
+T+1 for allt∈{0,...,T−1}.First, we show
+that the base of induction holds.
+Base of induction.
+1. To establish the first, we use Lemma 12, which guarantees the bound in∩i∈G ˆΘt, i.e., with
+probability1− α
+8(T+1).
+2. v0 = 1
+G
+∑
+i∈G((1−β)v −1
+i +β∇f i(x0,ξ 0
+i )) = β
+G∇f(x 0,ξ 0).Therefore, we have
+∥g0∥=β∥∇f(x 0,ξ 0)∥
+≤β∥∇f(x 0)∥+β∥∇f(x 0,ξ 0)−∇f(x 0)∥
+≤β
+√
+2L(f(x 0)−f ⋆) +β ˜c√
+G
+≤β
+√
+2L˜Φ0 +β ˜c√
+G
+≤β
+√
+4L˜∆ +β ˜c√
+G
+≤
+√
+64L˜∆ + 3˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z.
+The inequalities above again hold in˜Θ0, i.e., with probability at least1− α
+8(T+1).Therefore,
+the condition3of the induction is verified.
+3. We have
+∥v0−∇f(x 0)∥=∥β∇f(x 0,ξ 0)−∇f(x 0)∥
+≤β∥∇f(x 0,ξ 0)−∇f(x 0)∥+(1−β)∥∇f(x 0)∥
+≤βb+ (1−β)
+√
+4L˜∆.
+The bound above holds with probability at least1− α
+8(T+1) because it holds in∩ i∈G˜Θ0
+i.
+Therefore, the bound4of the assumption of the induction is verified.
+4. Next, we emphasize that the condition8of the induction assumption also hold, as ˜Φ0 ≤
+2˜Φ0≤2 ˜∆by the choice of˜∆.
+5. We finalize the induction base by noting that the condition6of the induction assumption
+holds since the RHS equals0.
+Therefore, we conclude that the conditions1-8hold with a probability of at least
+P
+(
+˜Θ0∩
+(
+∩i∈G˜Θ0
+i
+)
+∩
+(
+∩i∈G ˆΘ0
+i
+))
+≥1−P( ˜Θ0)−
+∑
+i∈G
+P(˜Θ0
+i )−
+∑
+i∈G
+P( ˆΘ0
+i )
+≥1− α
+8(T+ 1) −G· α
+8G(T+ 1) −G· α
+8G(T+ 1)
+= 1− α
+2(T+ 1) >1− α
+T+ 1 ,
+i.e.,P(E 0)≥1− α
+T+1 holds. This is the base of the induction.
+63
+Transition step of induction.Assume that all events ˜ΘK+1,˜ΘK+1
+i take place, i.e.,∥θK+1
+i ∥≤
+˜b,∥θK+1∥≤ ˜c√
+G for alli∈G. That is, we assume that the event
+˜ΘK+1∩
+(
+∩i∈G∩˜ΘK+1
+i
+)
+∩
+(
+∩i∈G ˆΘK+1
+i
+)
+∩ ˜EK
+holds. Then, by the assumptions of the induction and from Lemma 14, we get that
+∥vK+1∥≤
+√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z,
+from Lemma 15 we get that
+∥∇f(xK+1)−v K+1∥≤
+√
+4L˜∆ + 3
+2
+˜c√
+G
++ 3
+2
+√
+2cδbyzζ+ 3
+2
+√
+2cδbyz
+√
+β˜z,
+from Lemma 14 we get
+1
+G
+∑
+i∈G
+∥vK+1−v K+1
+i ∥2≤2ζ 2 + 2β˜z2.
+This means that conditions 1-5 in the induction assumption are also verified for the stepK+ 1.
+Since for allt∈{0,...,K+ 1}inequalities1-7are verified, we can write for eacht∈{0,...,K}
+by Lemmas 9 and 13 the following
+˜Φt+1 =δ t+1 + γ
+β
+˜Pt+1
+≤δ t− γ
+2∥∇f(xt)∥2− 1
+4γRt+γ˜Pt + 2cδbyzγ(ζ 2 +β˜z2)
++ γ
+β
+(
+(1−β) ˜Pt+3L2
+β Rt +β 2˜c2
+G + 2β(1−β)⟨ vt−∇f(x t+1),θt+1⟩
+)
+.
+Rearranging terms, we get
+˜Φt+1≤δ t− γ
+2∥∇f(xt)∥2+γ
+β
+˜Pt (β+ 1−β) + 2cδ byzγ(ζ 2 +β˜z2)− 1
+4γRt
+(
+1− 12L2
+β2 γ2
+)
++˜c2γβ
+G
++ 2γ(1−β)⟨∇f(x t)−∇f(x t+1),θt+1⟩.
+Using step-size restriction(ii), we get rid of the term withRt and obtain
+˜Φt+1≤δ t− γ
+2∥∇f(xt)∥2+γ
+β
+˜Pt + 2cδbyzγ(ζ 2 +β˜z2) +˜c2γβ
+G + 2γ(1−β)⟨∇f(x t)−∇f(x t+1),θt+1⟩.
+Now we sum all the inequalities above fort∈{0,...,K}and get
+˜ΦK+1≤ ˜Φ0− γ
+2
+K∑
+t=0
+∥∇f(xt)∥2+K˜c2γβ
+G + 2cδbyzγ(ζ 2 +β˜z2)K+ 2γ(1−β)
+K∑
+t=0
+⟨∇f(xt)−∇f(x t+1),θt+1⟩.
+(111)
+Rearranging terms, we get
+γ
+2
+K∑
+t=0
+∥∇f(xt)∥2≤ ˜Φ0−˜ΦK+1 +K˜c2γβ
+G + 2cδbyzγ(ζ 2 +β˜z2)K+ 2γ(1−β)
+K∑
+t=0
+⟨∇f(xt)−∇f(x t+1),θt+1⟩.
+Takingintoaccountthat γ
+2
+∑K
+t=0∥∇f(xt)∥2≥0, wegetthattheevent ˜EK∩
+(
+∩i∈G˜ΘK+1
+i
+)
+∩
+(
+∩i∈G ˆΘt
+i
+)
+∩
+˜ΘK+1 implies
+˜ΦK+1≤ ˜Φ0 +K˜c2γβ
+G + 2cδbyzγ(ζ 2 +β˜z2)K+ 2γ(1−β)
+K∑
+t=0
+⟨∇f(xt)−∇f(x t+1),θt+1⟩.
+64
+Next, we define the following random vector:
+ζt
+5 :=
+
+
+
+∇f(xt)−∇f(x t+1),if∥∇f(x t)−∇f(x t+1)∥≤Lγ
+(√
+64L˜∆ + 3 ˜c√
+G + 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√β˜z
+)
+0,otherwise
+.
+By definition, the introduced random vectorζt
+5 is bounded with probability1. Moreover, by the
+definition of ˜Et we get that the event˜EK∩˜ΘK+1∩
+(
+∩i∈G˜ΘK+1
+i
+)
+∩
+(
+∩i∈G ˆΘt
+i
+)
+implies
+ζt
+5 =∇f(x t)−∇f(x t+1).
+Therefore, the event˜EK∩˜ΘK+1∩
+(
+∩i∈G˜ΘK+1
+i
+)
+∩
+(
+∩i∈G ˆΘt
+i
+)
+implies
+˜ΦK+1≤ ˜Φ0 +K˜˜c
+2γβ
+G
+I
++ 2γ(1−β)
+G
+K∑
+t=0
+⟨ζt
+5,θt+1⟩
+  
+II
++ 2cδbyzγ(ζ 2 +β˜z2)K  
+III
+.
+Bound of the term I.Since4Lγ≤β, for the termIwe have
+K˜c2γβ
+G ≤K ˜c2 β2
+4LG.
+By choosingβsuch that
+β≤
+(
+4L˜∆G
+3T˜c2
+)1/2
+,(112)
+we get that
+K˜c2γβ
+G ≤
+˜∆
+2.
+This bound holds with probability1.Note that the worst dependency in the restriction onβw.r.t.
+TisO( 1/T1/2).
+Bound of the term III.Since4Lγ≤β, for the termIIIwe have
+2cδbyzγ(ζ 2 +β˜z2)K≤ 1
+2Lcδbyzβ(ζ 2 +β˜z2)K.
+By choosingβsuch that
+β≤min
+
+
+
+L˜∆
+3cδbyzζ2T,
+(
+L˜∆
+3cδbyzT˜z2
+)1/2
+
+,(113)
+we get that
+1
+2Lcδbyzβ(ζ 2 +β˜z2)K≤
+˜∆
+3.
+This bound holds with probability1.Note that the worst dependency in the restriction onβw.r.t.
+TisO( 1/T).
+Bound of the term II.The bound in this case is obtained by using concentration inequality
+Lemma 2. We define
+σ2
+8 := 4L2γ2·
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)2
+· σ2
+G.
+65
+Then we have
+E
+[
+exp
+(⏐⏐⏐⏐⏐
+4L2γ2
+σ2
+8
+4(1−β) 2⟨ζl
+5,θl+1⟩2
+⏐⏐⏐⏐⏐
+)
+|l
+]
+≤E
+[
+exp
+(
+4L2γ2
+σ2
+8
+∥ζl
+5∥2·∥θl+1∥2
+)
+|l
+]
+≤E
+
+exp
+(
+4L2γ2
+σ2
+8
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)
+·∥θl+1∥2
+)2
+|l
+
+.
+Sinceθ l+1 is sub-Gaussian with parameterσ2
+G, then we can continue the chain of inequalities above
+using the definition ofσ2
+8
+E
+
+exp
+
+
+[
+4L2γ2·
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)2
+· σ2
+G
+]−1
+·
+4L2γ2·
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)2
+·∥θl+1∥2
+)
+|l
+]
+=E
+[
+exp
+(
+∥θl+1∥2
+σ2/G
+)]
+≤exp(1).
+Therefore, we have by Lemma 2 that
+Pr
+[
+2γ(1−β)
+
+K∑
+t=0
+⟨ζt
+5,θt+1⟩
+
+≥(
+√
+2 +
+√
+2b1)
+√
+K∑
+t=0
+4L2γ2σ2
+G
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)2
+
+
+≤exp(−˜b2
+1/3) = α
+6(T+ 1) ,where ˜b2
+1 := 3 log
+(6(T+ 1)
+α
+)
+Using the restrictions4Lγ≤β, we get
+(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)· 2Lγ√
+G
+σ
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz
+√
+β˜z
+)
+≤(
+√
+2 +
+√
+2b1)
+√
+(K+ 1)· βσ
+2L
+√
+G
+(√
+64L˜∆ + 3 ˜c√
+G
++ 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz˜z
+)
+≤
+˜∆
+3
+because we chooseβ
+β≤
+
+ 2L˜∆
+√
+G
+3
+√
+2(1 +˜b1)σ
+√
+T
+(√
+64L˜∆ + 3 ˜c√
+G + 3
+√
+2cδbyzζ+ 3
+√
+2cδbyz˜z
+)
+
+,(114)
+andK+ 1≤T.
+This implies
+P
+(
+2γ(1−β)
+
+K∑
+t=0
+⟨ζt
+5,i,θt+1⟩
+≥
+˜∆
+3
+)
+≤ α
+6(T+ 1) .
+Note that the worst dependency in the choice ofβw.r.tTis ˜O(1/T1/2).
+66
+Algorithm 3Byz-Clip-SGD
+1:Input:x 0∈X,step-sizeγ >0, clipping
+parameterτ >0, DP-noise varianceσ 2
+ω≥0
+2:
+3:fort= 0,...,T−1do
+4:x t+1 =x t−γg t
+5:fori∈Gdo
+6:g t+1
+i = clipτ(∇fi(xt+1,ξt+1
+i ))
+7:ω t+1
+i ∼N(0,σ 2
+ωI)
+8:m t+1
+i =g t+1
+i +ω t+1
+i
+9:end for
+10:fori∈Bdo
+11:m t+1
+i = (∗)sends arbi-
+trary vector
+12:end for
+13:g t+1 = RAgg(mt+1
+1 ,...,m t+1
+n )
+14:end for
+Algorithm 4Safe-DSHB
+1:Input:x 0∈X,momentumβ∈(0,1],step-
+sizeγ >0,m 0
+i ∈R d,clippingτ >0, DP-
+noise varianceσ 2
+ω≥0
+2:fort= 0,...,T−1do
+3:x t+1 =x t−γg t
+4:fori∈Gdo
+5:g t+1
+i = clipτ(fi(xt+1,ξt+1
+i ))
+6:ω t+1
+i ∼N(0,σ 2
+ωI)
+7:m t+1
+i = (1−β)m t
+i +β(g t+1
+i +ω t+1
+i )
+8:end for
+9:fori∈Bdo
+10:m t+1
+i = (∗)sends arbi-
+trary vector
+11:end for
+12:g t+1 = RAgg(mt+1
+1 ,...,m t+1
+n )
+13:end for
+Final probability.Therefore, the probability event
+Ω := ˜EK∩˜ΘK+1∩
+(
+∩i∈G˜ΘK+1
+i
+)
+∩
+(
+∩i∈G ˆΘK+1
+i
+)
+∩EI∩EII∩EIII,
+whereE I-EIII denotes that each of the termsI,II,andIIIis smaller than ˜∆
+3. This implies that
+I+II+III≤ ˜∆,
+i.e., condition6in the induction assumption holds. Moreover, this also implies that
+˜ΦK+1≤ ˜Φ0 + ˜∆≤ ˜∆ +˜∆ = 2˜∆,
+i.e., condition5in the induction assumption holds. The probabilityP(˜EK+1)can be lower bounded
+as follows
+P(˜EK+1)≥P(Ω)
+=P
+(
+˜EK∩˜ΘK+1∩
+(
+∩i∈G˜ΘK+1
+i
+)
+∩
+(
+∩i∈G ˆΘK+1
+i
+)
+∩EI∩EII∩EIII
+)
+= 1−P
+(
+˜EK∪˜ΘK+1∪
+(
+∪i∈G˜ΘK+1
+i
+)
+∪
+(
+∪i∈G ˆΘK+1
+i
+)
+∪EI∪EII∪EIII
+)
+≥1−P( ˜EK)−P( ˜ΘK+1)−
+∑
+i∈G
+P(˜ΘK+1
+i )−
+∑
+i∈G
+P( ˆΘK+1
+i )−P( EI)
+=0
+−P(EII )−P( EIII )
+=0
+≥1− α(K+ 1)
+T+ 1 − α
+8(T+ 1) −
+∑
+i∈G
+α
+8G(T+ 1) −
+∑
+i∈G
+α
+8G(T+ 1) − α
+8(T+ 1)
+≥1− α(K+ 2)
+T+ 1 .
+This finalizes the transition step of induction. The result of the theorem follows by settingK=
+T−1. Indeed, from (70) we obtain
+γ
+2
+K∑
+t=0
+∥∇f(xt)∥2≤ ˜Φ0−˜ΦK+1 + ˜∆≤2 ˜∆⇒ 1
+T
+T−1∑
+t=0
+∥∇f(xt)∥2≤ 4˜∆
+γT.(115)
+67
+Final rate.We highlight that we are interested in the functional dependency of the rate on
+the problem constants. Therefore, in the rest of the proof, we omit using numerical constants.
+Translating momentum restriction to step-size restriction
+γ= 1
+L
+˜O
+
+
+min
+
+
+
+1,
+(
+L˜∆G
+Tσ 2
+)1/2
+ 
+from term I (112)
+,
+
+ L˜∆
+√
+G
+σ
+√
+T(
+√
+L˜∆ +σ/
+√
+G+
+√
+cδbyzζ+
+√
+cδbyzσ
+
+
+  
+from term II (114)
+,
+(
+L˜∆
+cδbyzTζ 2
+)
+ 
+from term III (113)
+,
+
+
+
+
+
+,
+(116)
+We plug in the restrictions (116) on the step-size into (115) and obtain the rate
+1
+T
+T−1∑
+t=0
+∥∇f(xt)∥2≤ L˜∆
+T
+˜O
+
+1 +
+(
+Tσ 2
+L˜∆G
+)1/2
++ σ
+√
+T(
+√
+L˜∆ +σ/
+√
+G+
+√
+cδbyzζ+
+√
+cδbyzσ)
+L˜∆
+√
+G
++ cδbyzTζ 2
+L˜∆
+
+
+= ˜O
+
+L˜∆
+T +
+(
+σ2L˜∆
+GT
+)1/2
++ σ(
+√
+L˜∆ +σ/
+√
+G+
+√
+cδbyzζ+
+√
+cδbyzσ)√
+GT
++cδ byzζ2
+
+.
+(117)
+It remains to provide a valid upper bound˜∆on ˜Φ0. Since we initializev0
+i = 0, then
+˜Φ0 =F 0 + γ
+β∥∇f(x 0)∥2≤F 0 + 1
+4L·2L(f(x 0)−f ⋆) = 2F 0.
+This concludes the proof.
+F Additional Experiments and Training Details
+Our implementation builds on the codebase of Horváth and Richtárik [2020] to simulate a dis-
+tributed environment, while the attack implementations are adopted from Gorbunov et al. [2022b].
+It can be found via the linkhttps://anonymous.4open.science/r/ByzClip21SGD2M.
+F.1 Training Details
+Inourexperiments, wecompareByz-Clip21-SGD2MagainstByz-Clip-SGDandSafe-DSHB[Allouah
+et al., 2023b], outlined in Algorithm 3 and Algorithm 4, respectively. Note thatByz-Clip-SGDis a
+variant ofDP-SGDin which a robust aggregation rule replaces server-side averaging. SinceDP-SGD
+is state-of-the-art for private learning, this modification (Algorithm 3) serves as our first baseline.
+The method of Allouah et al. [2023b] originally performs per-example clipping (line 5); to align
+with our analysis underσ-sub-Gaussian noise, i.e., without assuming a finite-sum structure forfi,
+we instead clip the stochastic gradient.
+In experiments of Section 6, we use a coupling of Nearest Neighbor Mixing (NNM) [Allouah et al.,
+2023a] and Coordinate Median (CM) [Chen et al., 2017] as an aggregation rule, while Gaussian
+mechanism utilizesδ= 4·10 −4.
+F.2 Label Flipping Attack
+We evaluateByz-Clip21-SGD2M,Byz-Clip-SGD, andSafe-DSHBon CNN and MLP models under
+a label-flipping attack [Paudice et al., 2018]. MNIST is evenly partitioned acrossn= 25clients;
+Byzantine clients flip labels asy→9−y. We vary the number of Byzantine clients and the
+privacy budgetε∈{3,8,13,18,23}, fixingδ= 4·10 −4. Hyperparameter tuning follows Section 6.
+All methods use mini-batch gradients with a batch size32and no privacy amplification by sub-
+sampling. We use a coupling ofNNMandCMas a server-side aggregation rule. All algorithms are
+run for60epochs.
+68
+Algorithm 5Byz-Clip21-SGD2M+
+1:Input:x 0∈X,momentum parametersβ, ˆβ∈(0,1],step-sizeγ >0,g 0
+i =m 0
+i ∈R d,clipping
+parametersτ i,τo>0, DP-noise varianceσ 2
+ω≥0
+2:fort= 0,...,T−1do
+3:x t+1 =x t−γg t
+4:fori∈Gdo
+5:SampleS t+1
+i ∼Unif[m]of cardinalityS
+6:ω t+1
+i ∼N(0,σ 2
+ωI)
+7:v t+1
+i = (1−β)v t
+i + β
+S
+∑
+j∈St+1
+i
+(clipτi(∇fij(xt+1)) +ωt+1
+i )
+8:c t+1
+i = clipτ(vt+1
+i −g t
+i)
+9:g t+1
+i =g t
+i + ˆβclipτo(vt+1
+i −g t
+i)
+10:end for
+11:fori∈Bdo
+12:c t+1
+i = (∗)sends arbi-
+trary vector
+13:end for
+14:m t+1
+i =m t
+i + ˆβct+1
+i
+15:g t+1 = RAgg(mt+1
+1 ,...,m t+1
+n )
+16:end for
+Figure 2 summarizes the results. Unlike under theIPMattack, performance degrades for all
+methods as the number of Byzantine clients grows. Even so,Byz-Clip21-SGD2Mtypically achieves
+the best test accuracy, aligning with our theory. In most settings, the margin is substantial,
+highlighting the effectiveness of the proposed algorithm for private training.
+F.3 Amplification by Sub-sampling
+We next consider a modified variant ofByz-Clip21-SGD2M(see Algorithm 5), which we call
+Byz-Clip21-SGD2M+. Unlike the population setting considered in the main body, each client now
+holds a finite dataset of sizemwith a local objective
+f(x) = 1
+G
+∑
+i∈G
+fi(x), f i(x) = 1
+m
+m∑
+j=1
+fij(x).
+At iterationt, clienti∈Gsamples a mini-batchS t+1
+i of sizeS, averages example-wise clipped
+stochastic gradients, and updates its momentum buffer using a noised version of this average (line
+7 in Algorithm 5). This modification enables privacy amplification through sub-sampling, as each
+per-example gradient is protected via the Gaussian mechanism, and local DP guarantees are implied
+by post-processing. Consequently, the required DP noise can be reduced to
+σω = S
+m· τ
+ε
+√
+Tlog 1
+δ,
+following Abadi et al. [2016]. We highlight thatByz-Clip21-SGD2M+has two clipping operators. In
+the experiments, we vary the inner one (line 7) while the outer one is fixedτo = 1(line 9). We com-
+pare this enhanced version ofByz-Clip21-SGD2MagainstByz-Clip-SGDand originalSafe-DSHB,
+where example-wise clipping is also incorporated into the algorithm design.
+We compare all methods under the previous setup: CNN/MLP training on MNIST with a
+stronger privacy budgetε∈ {0.1,0.3,1,3}and a label-flipping attack. We split the training
+set acrossn= 25clients equally. We tune the learning rate over{10,1,0.1,0.01}and the clip-
+ping threshold over{1,0.3,0.1,0.03,0.01}(this corresponds toτ i inByz-Clip21-SGD2M+). For
+Safe-DSHBandByz-Clip21-SGD2M+we setβ= 0.1as before; forByz-Clip21-SGD2M+we use
+τo = 1and ˆβ= 0.01. To defend against Byzantine clients, we employ a hybrid aggregation rule on
+the server that combinesNNMandCM. We decrease the number of epochs to30.
+69
+0:1 0:3 1 3
+Privacy Budget "
+MLP, 1 Byzantine Clients, ^± = 0.04
+50
+60
+70
+80
+90Final T est Accuracy
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M+
+0:1 0:3 1 3
+Privacy Budget "
+MLP, 5 Byzantine Clients, ^± = 0.2
+50
+60
+70
+80
+90
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M+
+0:1 0:3 1 3
+Privacy Budget "
+MLP, 10 Byzantine Clients, ^± = 0.4
+50
+60
+70
+80
+90
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M+
+0:1 0:3 1 3
+Privacy Budget "
+MLP, 1 Byzantine Clients, ^± = 0.04
+60
+70
+80
+90Final T est Accuracy
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M+
+0:1 0:3 1 3
+Privacy Budget "
+MLP, 5 Byzantine Clients, ^± = 0.2
+60
+70
+80
+90
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M+
+0:1 0:3 1 3
+Privacy Budget "
+MLP, 10 Byzantine Clients, ^± = 0.4
+60
+70
+80
+90
+Byz-Clip-SGD
+Safe-DSHB
+Byz-Clip21-SGD2M+
+Figure F.1: Performance ofByz-Clip21-SGD2M+,Byz-Clip-SGD, andSafe-DSHBwhen training
+CNN (top line) and MLP (bottom line) models on the MNIST dataset for different numbers of
+Byzantine clients and privacy budgets, when Byzantine clients use a label flipping attack, when
+amplification by sub-sampling is done.
+Results in Figure F.1 (bottom line) show that with1or5Byzantine clients, the methods are
+broadly competitive when training MLP model, withSafe-DSHBslightly leading atε= 0.1. With
+10Byzantines,Safe-DSHBandByz-Clip-SGDedge outByz-Clip21-SGD2M+atε= 0.1, whereas
+forε∈{0.3,1,3}Byz-Clip21-SGD2M+clearly outperforms both baselines.
+For the CNN model (Figure F.1, top row), the trend is similar:Byz-Clip-SGDandSafe-DSHB
+perform slightly better atε= 0.1, whereasByz-Clip21-SGD2M+is marginally more effective when
+the number of Byzantine clients is large.
+Experiments on CIFAR10 [Krizhevsky, 2009] with the CNN model showed no significant differ-
+ence betweenByz-Clip21-SGD2M+and the baselines; therefore, we do not report these results.
+While we do not provide convergence guarantees forByz-Clip21-SGD2M+, our experiments show
+that it delivers competitive performance against other baselines when amplification by sub-sampling
+is enabled. A theoretical analysis is deferred to future work since the example-wise clipping makes
+the analysis substantially more involved than forByz-Clip21-SGD2M.
+70

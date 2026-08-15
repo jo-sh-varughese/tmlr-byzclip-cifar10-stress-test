@@ -1,0 +1,5821 @@
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Youssef Allouah†∗ Sadegh Farhadkhani† Rachid Guerraoui†
+Nirupam Gupta† Rafa¨el Pinot† John Stephan†
+Abstract
+Byzantine machine learning (ML) aims to ensure
+the resilience of distributed learning algorithms to
+misbehaving (or Byzantine) machines. Although
+this problem received signiﬁcant attention, prior
+works often assume the data held by the machines
+to be homogeneous, which is seldom true in prac-
+tical settings. Data heterogeneity makes Byzan-
+tine ML considerably more challenging, since a
+Byzantine machine can hardly be distinguished
+from a non-Byzantine outlier. A few solutions
+have been proposed to tackle this issue, but these
+provide suboptimal probabilistic guarantees and
+fare poorly in practice.
+This paper closes the theoretical gap, achieving
+optimality and inducing good empirical results. In
+fact, we show how to automatically adapt existing
+solutions for (homogeneous) Byzantine ML to the
+heterogeneous setting through a powerful mech-
+anism, we call nearest neighbor mixing (NNM),
+which boosts any standard robust distributed gra-
+dient descent variant to yield optimal Byzantine
+resilience under heterogeneity. We obtain similar
+guarantees (in expectation) by plugging NNM in
+the distributed stochastic heavy ball method, a
+practical substitute to distributed gradient descent.
+We obtain empirical results that signiﬁcantly out-
+perform state-of-the-art Byzantine ML solutions.
+1 Introduction
+Distributed machine learning (ML), i.e., distributing the
+training process amongst several machines (orworkers), has
+been pivotal to the development of large complex models
+with high accuracy guarantees [1, 28, 24]. In the now stan-
+dard master-worker architecture, distributed ML essentially
+†Ecole Polytechnique F´ed´erale de Lausanne (EPFL), Switzerland.
+Author names are listed in alphabetic order.∗Correspondence to:
+<youssef.allouah@epﬂ.ch>.
+consists in the workers sharing their local actions with the
+help of a master machine (a.k.a., server) to compute an
+accurate global model. Despite its rising popularity, dis-
+tributed ML is arguably very fragile and not yet ready for
+real-world deployment. In particular, a handful of misbehav-
+ing (a.k.a., Byzantine [30]) workers can highly compromise
+the efﬁcacy of standard distributed ML algorithms such
+as distributed gradient descent (D-GD) [6], by sending er-
+roneous information to the server, e.g., see [ 5, 47]. Such
+behaviors can be caused by software and hardware bugs, by
+poisoned data or by malicious players controlling part of the
+system. Besides, this vulnerability can lead to severe soci-
+etal repercussions if the resulting ML models are deployed
+in sensitive data-oriented applications such as medicine.
+The problem of Byzantine resilience in distributed ML (or
+Byzantine ML) has received signiﬁcant attention in recent
+years [7, 11, 48, 3, 13, 25, 26, 17]. It consists in designing a
+distributed algorithm that delivers an accurate model despite
+the presence of a subset of Byzantine workers. The standard
+approach (in a master-worker architecture) consists in hav-
+ing the server compute a robust aggregation to merge the
+information sent by the workers, to discard outliers. Most
+prior works relies however upon the strong assumption of
+homogeneity; i.e, the data sampled by the workers during
+the training process are assumed to be identically distributed.
+This assumption, although justiﬁable in a centralized set-
+ting [8], is impractical in a distributed environment [ 24].
+Indeed, as each worker only holds a small part of the entire
+training dataset, the data samples at the workers are usually
+heterogeneous and need not be an accurate representation of
+the entire population. These differences in the workers’ data
+samples can camouﬂage disruptive deviations of Byzantine
+machines from the prescribed algorithm, making the prob-
+lem of Byzantine ML under heterogeneity signiﬁcantly more
+challenging than its homogeneous counterpart [13, 26].
+Recent works have shown that heterogeneity in workers’
+data inevitably prevents any distributed ML algorithm from
+delivering an arbitrarily accurate model in the presence of
+Byzantine workers [10, 34]. More speciﬁcally, in the context
+of smooth loss functions, a Byzantine ML solution can only
+deliver an approximate stationary point with an error lower
+bounded by the fraction of Byzantine workers times the
+maximal dispersion in workers’ gradients (stemming from
+arXiv:2302.01772v1  [cs.LG]  3 Feb 2023
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+data heterogeneity) [26]. Despite a few attempts [ 20, 13,
+26], no solution has so far matched the above lower bound
+deterministically, i.e., achievedoptimal Byzantine resilience.
+The best solutions so far [26] are randomized and could only
+match the lower bound in expectation (see Section 2).
+Main result. We close the theoretical gap and reach opti-
+mal Byzantine resilience under heterogeneity. Speciﬁcally,
+we show how to automatically adapt existing solutions for
+homogeneous Byzantine ML to the heterogeneous setting,
+while ensuring optimality. We do so through nearest neigh-
+bor mixing (NNM), a pre-aggregation method that averages
+each input with a subset of their nearest neighbors. We
+show that enhancing D-GD using a composition of NNM
+and a standard robust aggregation directly yields the ﬁrst
+Byzantine ML solution to achieve optimal resilience under
+heterogeneity. Our guarantee holds as long as less than half
+of the workers are Byzantine, which is optimal.
+Technical contributions. To prove our guarantees, we in-
+troduce a novel robustness criterion called(f,κ )-robustness.
+This notion quantiﬁes the ability of an aggregation rule
+to estimate the average of honest workers’ inputs despite
+f out of n workers being Byzantine. Crucially, our crite-
+rion characterizes a class of aggregations rules (for which
+κ =O (f/n)) that grant optimal Byzantine resilience to
+D-GD under heterogeneity. While many notable aggrega-
+tion rules (e.g., geometric median [43], coordinate-wise me-
+dian [48], and Krum [7]) satisfy (f,κ )-robustness, they fall
+short of optimal robustness, as theirκ is in Θ(1). Our main
+technical contribution is showing that NNM overcomes this
+shortcoming. Particularly, we prove that NNM determinis-
+tically reduces the variance of the honest inputs by a fac-
+torO(f/n), while sufﬁciently limiting their drift from the
+true average. Consequently, we show that composing a
+(f,O(1))-robust aggregation with NNM enables the larger
+class of (f,O(1))-robust aggregation rules to confer optimal
+Byzantine resilience to D-GD.
+Empirical evaluation. Although we prove D-GD en-
+hanced by NNM to be optimal, workers still need to com-
+pute the full gradient of their local loss function at every
+step, and risk getting stuck at saddle points [12, 8]. We go
+one step further and show that applyingNNM to a stochastic
+variant of D-GD, namely the distributed stochastic heavy
+ball method (D-SHB) [39], matches the lower bound in ex-
+pectation1. We empirically show that the resulting scheme
+signiﬁcantly improves over the state-of-the-art when tested
+on standard classiﬁcation tasks such as MNIST and CIFAR-
+10. In short, our approach enables a modular practice of
+Byzantine resilient ML under heterogeneity, by ﬁrst patch-
+ing existing solutions with NNM and then deploying them
+with D-SHB.
+1The expectation is on the randomness due to data subsampling,
+unlike [26] which features additional sources of randomness that
+hinder empirical performance. See Section 5.2 for details.
+Paper outline. Section 2 formally presents the problem of
+Byzantine ML and discusses the related work. Section 3
+introduces the analysis framework for robust variants of
+D-GD. Section 4 presents NNM, our solution to render
+existing methods optimal. Section 5 presents a practical
+stochastic extension of our approach. Section 6 presents our
+experimental results. We defer all proofs to Appendix 8-13.
+2 Background & Related Work
+We consider a master-worker distributed architecture withn
+workersw1,...,w n and a central server. The workers hold
+local datasetsD1,..., Dn, composed each ofm data points
+from an input spaceZ. Speciﬁcally, for anyi∈ [n],Di :=
+{z(i)
+1 ,...,z (i)
+m}⊂Z m. For a given model parameterized
+by vectorθ∈ Rd, each workerwi has a loss function
+Li(θ) := 1
+m
+m∑
+k=1
+ℓ(θ,z (i)
+k ),
+where ℓ : Rd×Z → R is a point-wise loss function,
+which we assume to be differentiable with respect to θ.
+Furthermore, we assume each loss function Li to be L-
+smooth; i.e., for allθ,θ′∈ Rd,
+∥∇Li(θ)−∇Li(θ′)∥≤ L∥θ−θ′∥.
+Objective in a Byzantine-free setting. When all the work-
+ers are honest, i.e., they follow the prescribed algorithm
+correctly, the goal of the server is to compute a stationary
+point of the global loss function 2L(θ) := 1
+n
+∑n
+i=1Li(θ).
+Speciﬁcally, the server seeks to compute a stationary point
+θ∗, i.e.∇L(θ∗) = 0, where∇L denotes the gradient ofL.
+Assuming thatL admits a stationary point, this goal can be
+achieved using the classical distributed (stochastic) gradient
+descent (D-GD/SGD) method [6], up to an approximation
+error. In this method, the server maintains a model which is
+updated iteratively upon averaging the (stochastic) gradients
+computed by the workers on their loss functions.
+Objective with Byzantine workers. We consider an ad-
+versarial setting wheref workers, of a priori unknown iden-
+tities, are Byzantine [30]. These workers need not follow
+the prescribed protocol and may send arbitrary messages
+to the server. Here, the goal of the server is ﬁnding a sta-
+tionary point of the average loss function of the honest (i.e.,
+non-Byzantine) workers. We formally deﬁne Byzantine
+resilience in this context as follows.
+Deﬁnition 1 ((f,ε )-Byzantine resilience). A learning al-
+gorithm is said (f, ε)-Byzantine resilient if, despite the
+2Ideally, the server seeks to ﬁnd a global minimizer of L. How-
+ever, as the loss could be non-convex (e.g., for neural networks),
+global minimization is NP-hard in general [9]. Hence, we usually
+aim to ﬁnd stationary points.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+presence off Byzantine workers, it outputs ˆθ such that
+∇LH(ˆθ)
+
+2
+≤ε,
+whereH denotes the set of indices of honest workers and
+LH(θ) := 1
+|H|
+∑
+i∈HLi(θ).
+In words, a (f,ε )-Byzantine resilient algorithm ﬁnds an
+ε-approximate stationary point for the honest empirical loss
+even in the presence of f Byzantine workers. Note that
+(f,ε )-Byzantine resilience is impossible in general (for any
+ε) whenf≥ n/2, see [34]. Therefore, throughout the paper,
+we assume thatf <n/2.
+Standard Byzantine ML solutions. A typical strategy to
+obtain (f,ε )-Byzantine resilience is to enhance the D-GD
+(or D-SGD) method by replacing the simple averaging of
+the workers’ gradients at the server by a robust aggrega-
+tion rule. Basically, such a scheme aims to mitigate the
+negative impact of Byzantine gradients by accurately esti-
+mating the average of honest workers’ gradients. Promi-
+nent aggregation rules include Krum [7], geometric median
+(GM) [43, 38, 2], coordinate-wise median (CWMed) [48],
+coordinate-wise trimmed mean (CWTM) [ 48], and mini-
+mum diameter averaging (MDA) [40, 13]. Recent studies
+have also explored the idea of using the history of workers’
+gradients to strengthen the resilience guarantees of these
+solutions, e.g., by using distributed momentum [26, 17] or
+by tracking the history of the workers’ gradients [3].
+Nevertheless, all these works rely heavily on the assumption
+that the honest workers have homogeneous data, i.e., there
+exists a ground-truth distributionD such thatDi∼D m for
+alli∈H . Crucially, the robustness of these methods deteri-
+orates drastically when this assumption is violated [26].
+The challenge of heterogeneity in Byzantine ML. The
+data across the honest workers is arguably heterogeneous in
+real-world distributed settings. In the context of non-convex
+optimization, data heterogeneity can be modeled as stated
+per the following assumption [27, 26].
+Assumption 1 (Bounded heterogeneity). There exists a real
+valueG such that for allθ∈ Rd,
+1
+|H|
+∑
+i∈H
+∥∇Li(θ)−∇LH(θ)∥2≤G2.
+Such heterogeneity makes the problem of Byzantine ML
+much more challenging, as the server can confuse incorrect
+gradients (from a Byzantine worker) with correct gradients
+from an honest worker holding outlier data points. Indeed,
+recent works show that there exists a lower bound on the
+error of any distributed algorithm in the presence of Byzan-
+tine workers [13, 26]. Speciﬁcally, we have the following
+result, owing to Theorem III in [26].
+Proposition 1. If a learning algorithm A is (f,ε )-
+Byzantine resilient for every collection of smooth loss
+functionsL1,..., Ln satisfying Assumption 1, then ε =
+Ω
+(
+f/nG2)
+.
+Brittleness of existing solutions for heterogeneity. Only
+a handful of prior works have studied Byzantine ML under
+heterogeneity. The problem was ﬁrst formally addressed
+in [32] by proposing RSA, a variant of D-SGD built upon
+ℓp regularization. However, the analysis of RSA relies on
+the assumption of strong convexity, which is rarely satisﬁed
+in modern-day ML. A subsequent work [20] introduced a
+novel aggregation rule, namely comparative gradient elim-
+ination (CGE). While this work provides some valuable
+insight on the general problem of heterogeneous Byzantine
+ML (notably on the need for redundancy), CGE fails to
+guarantee convergence even in the homogeneous setting
+(see [17]). The work [ 13] considers a peer-to-peer setting
+with asynchronous communication and heterogeneous data.
+However, the proposed algorithm is only analyzed asymp-
+totically and provides suboptimal probabilistic robustness.
+In this peer-to-peer setting, another work used a nearest
+neighbor scheme similar to ours [ 16], with honest nodes
+using their own honest vectors as pivots. However, in our
+master-worker setting, their technique cannot be used as the
+server does not have access to any reliable vector.
+The closest relevant work to ours is [ 26], which also pro-
+poses a pre-aggregation step called Bucketing, which is rem-
+iniscent of the median-of-means estimator [36, 23, 4, 44].
+Essentially, Bucketing consists in randomly partitioning the
+inputs into buckets, and then feeding the average of the
+inputs of each bucket to the robust aggregation rule. The
+randomness of the partition process reduces the empirical
+variance of the honest inputs in expectation, but it highly
+compromises the worst-case robustness of the scheme (see
+Appendix 10 for a detailed explanation). Furthermore, our
+experiments expose the inability of these methods to defend
+against state-of-the-art Byzantine attacks [47, 5, 3, 26].
+3 Robust Distributed Gradient Descent
+In this section, we introduce a general framework for an-
+alyzing the convergence of robust variants of D-GD (or
+robust D-GD). We use this framework later in Section 4 to
+showcase the beneﬁts of our proposed pre-aggregation step
+NNM. We start by presenting the skeleton of robust D-GD
+in Section 3.1 below. Then, we present the convergence
+analysis of robust D-GD in Section 3.2 upon introducing
+the notion of (f,κ )-robustness.
+3.1 Description of Robust D-GD
+Robust D-GD, summarized below in Algorithm 1, is an
+iterative algorithm that proceeds inT steps.
+Essentially, the server starts by initializing a parameter vec-
+torθ0. At each stept∈ [T ], the server broadcasts the model
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Aggregation GM CWTM CWMed Krum Lower bound
+κ
+(
+1 + f
+n−2f
+)2 f
+n−2f
+(
+1 + f
+n−2f
+) (
+1 + f
+n−2f
+)2
+1 + f
+n−2f
+f
+n−2f
+Table 1: Robustness coefﬁcient κ for different (f,κ )-robust aggregation rules, ignoring numerical constants. The exact
+robustness coefﬁcients are deferred to Appendix 8.1. Note also that our analysis is tight and signiﬁcantly improves over
+previous works [17, 26], e.g., eliminating the dependence on dimension for CWMed and CWTM.
+Algorithm 1: Robust D-GD
+Input: Initial modelθ0, robust aggregationF , learning
+rateγ, and number of stepsT .
+fort = 1...T do
+Server broadcastsθt−1 to all workers;
+for every honest worker, i in parallel do
+Compute and send gradientg(i)
+t =∇Li(θt−1);
+Server aggregates the gradients:
+Rt =F (g(1)
+t ,...,g (n)
+t );
+Server updates the model:θt =θt−1−γRt;
+Server ﬁndsτ∈ arg min
+1≤t≤T
+∥Rt∥ and sets ˆθ =θτ−1.
+return ˆθ;
+θt−1 to all the workers. After receiving θt−1, each honest
+worker sends back the gradient g(i)
+t =∇Li(θt−1), com-
+puted by evaluatingθt−1 on their local datasetDi. While the
+honest workers follow the algorithm correctly, a Byzantine
+workerwi may send any arbitrary value forg(i)
+t . Upon re-
+ceiving the gradients from all the workers, the server aggre-
+gates them using a robust aggregation ruleF : Rd×n→ Rd.
+Speciﬁcally, the server computes
+Rt =F
+(
+g(1)
+t ,...,g (n)
+t
+)
+.
+Finally, the server updates the model toθt =θt−1−γRt,
+whereγ >0 is referred to as the learning rate. AfterT steps,
+the server outputs the model θt for which the associated
+aggregateRt has the smallest norm. That is, the algorithm
+outputs ˆθ =θτ−1, whereτ∈ arg min
+1≤t≤T
+∥Rt∥.
+3.2 Analysis of Robust D-GD
+At the core of robust D-GD lies the aggregation ruleF . To
+tightly analyze the utility ofF , we introduce the notion of
+(f,κ )-robustness which uniﬁes previous robustness criteria
+and is sufﬁciently ﬁne-grained to obtain tight convergence
+guarantees. In words, (f,κ )-robustness ensures that the
+error of an aggregation rule, in estimating the average of the
+honest inputs, is uniformly bounded byκ times the variance
+of honest inputs. Formally, it is deﬁned as follows.
+Deﬁnition 2 ((f,κ )-robustness). Letf <n/2 andκ≥ 0.
+An aggregation ruleF is said to be (f,κ )-robust if for any
+vectorsx1,..., x n∈ Rd, and any setS⊆ [n] of sizen−f,
+∥F (x1,..., x n)−xS∥2≤ κ
+|S|
+∑
+i∈S
+∥xi−xS∥2
+wherexS = 1
+|S|
+∑
+i∈Sxi. We refer toκ as the robustness
+coefﬁcient.
+Our criterion uniﬁes the existing robustness deﬁnitions
+including (f,λ )-resilient averaging [17] and (δmax,c )-
+ARAgg [26]. Speciﬁcally, when κ =O(f/n), our deﬁni-
+tion implies both (f,λ )-resilient averaging and (δmax,c )-
+ARAgg3. We prove this claim in Appendix 8.3. Further-
+more, (f,κ )-robustness allows us to devise a general con-
+vergence analysis for robust D-GD when up tof workers
+are Byzantine, under the standard heterogeneity assumption.
+We present our general convergence analysis of robust D-
+GD in Theorem 1 below, assuming F to be (f,κ )-robust.
+Recall thatH denotes the set of indices for honest workers.
+Theorem 1. Let Assumption 1 hold and recall thatLH is
+L-smooth. Consider Algorithm 1 withT≥ 1 and learning
+rateγ = 1/L. IfF is (f,κ )-robust then
+∇LH(ˆθ)
+
+2
+≤ 4κG2 + 4L(LH(θ0)−L∗)
+T ,
+whereL∗ := infθ∈RdLH(θ).
+According to Theorem 1, the asymptotic error for robust
+D-GD (when T → ∞) is optimal, i.e., it matches the
+lower bound from Proposition 1 ifF is (f,κ )-robust with
+κ =O (f/n). In the homogeneous case, i.e., when G = 0,
+robust D-GD can asymptotically reach a stationary point
+of the average honest loss function despite the presence of
+f Byzantine workers, as long as F is (f,κ )-robust with a
+boundedκ. Note that the convergence rate of 1/T is stan-
+dard for smooth non-convex loss functions when analyzing
+ﬁrst-order methods such as gradient descent [19].
+Suboptimality of existing aggregations. Several existing
+aggregation rules such as CWTM, Krum, GM, and CWMed
+can be shown to be (f,κ )-robust. The robustness coefﬁ-
+cientsκ for these rules are listed in Table 1, and the formal
+derivations are deferred to Appendix 8.1. Note also that for
+anyf <n/2, an aggregation rule cannot be (f,κ )-robust for
+3Although for satisfying (f,λ )-resilient averaging condition
+havingκ =
+√
+λ sufﬁces, i.e., it need not be in O(f/n).
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+κ< f
+n−2f (see Appendix 8.2 for details). This lower bound
+means that, in general, a robust aggregation rule cannot pro-
+vide an estimate that is arbitrarily close to the average of
+honest inputs. This also indicates that the values in Table 1
+for Krum, GM, and CWMed are suboptimal, as they do
+not match the lower bound. We show in the next section
+that NNM solves this issue by boosting the robustness of
+these aggregation rules and provides optimal convergence
+for robust D-GD.
+4 Fixing by Nearest Neighbor Mixing
+In this section, we present a principled way of ﬁxing the
+suboptimality of existing solutions in terms of Byzantine
+resilience. Speciﬁcally, we introduce a pre-aggregation
+algorithm called nearest neighbor mixing (NNM), and prove
+optimal Byzantine robustness when it is embedded in D-
+GD. We describe the NNM procedure in Section 4.1 and
+demonstrate in Section 4.2 that NNM ampliﬁes robustness
+when applied prior to an aggregation rule.
+4.1 Description of NNM
+Given a set of n input vectors x1,...,x n ∈ Rd, NNM
+replaces every vector with the average of its n−f near-
+est neighbors (including itself). Formally, NNM outputs
+(y1,...,y n) = NNM(x1,...,x n) where for eachi∈ [n],
+yi = 1
+n−f
+n−f∑
+j=1
+xi:j ; (1)
+wherexi:j is the jth nearest vector to xi in (x1,...,x n).
+Intuitively, in the context of robust D-GD, applyingNNM
+mixes the gradients artiﬁcially, hence making every mixed
+gradient a better representation of∇LH(θt−1). The overall
+procedure for NNM can be found in Algorithm 2.
+Algorithm 2: Nearest Neighbor Mixing (NNM)
+Input: number of inputsn, number of Byzantine inputs
+f <n/2, vectorsx1,...,x n∈ Rd.
+fori = 1...n do
+Sort inputs to get (xi:1,...,x i:n) such that
+∥xi:1−xi∥≤ ... ≤∥xi:n−xi∥;
+Average then−f nearest neighbors ofxi, i.e.,
+yi = 1
+n−f
+n−f∑
+j=1
+xi:j ;
+returny1,...,y n;
+Remark 1. The computational cost of NNM isO
+(
+dn2)
+in
+the worst case, which is due to the search of then−f nearest
+neighbors of each input. Faster algorithms for approximate
+nearest neighbor search [21, 35] could be used for efﬁciency.
+Nevertheless, we argue that the cost of NNM is comparable
+to (or even smaller than) several aggregation rules includ-
+ing Krum [7], Multi-Krum [7], and MDA [40, 14]. Below,
+we list the cost of prominent aggregation rules: Krum and
+Multi-Krum: O(dn2), CWMed [ 48] and MeaMed [ 46]:
+O(dn), CWTM [48]:O(dn logn),ϵ-approximate GM [2]:
+O(dn +dϵ−2), MDA: O(dn2 +
+(n
+f
+)
+n2). Finally, unlike
+spectral methods [ 42], we stress that our algorithm pre-
+serves linear dependency in d, which may be extremely
+large in modern-day ML (i.e.,d≫n).
+4.2 Analysis of NNM
+We now present in Lemma 1 the robustness ampliﬁcation
+that NNM brings to a (f,κ )-robust aggregation rule. We
+then show in Corollary 1 how it leads to optimal Byzantine
+resilience guarantees under heterogeneity.
+Lemma 1. Let f < n/2 and F : Rd×n → Rd. If F is
+(f,κ )-robust, thenF◦ NNM is (f,κ′)-robust with
+κ′≤ 8f
+n−f (κ + 1).
+Essentially, Lemma 1 means that the composition of NNM
+with any (f,κ )-robust aggregation rule improves the order
+of magnitude of the robustness coefﬁcient toO(f/n(κ + 1)).
+Speciﬁcally, this means that ifF has a robustness coefﬁcient
+κ =O(1), NNM renders the new robustness coefﬁcient
+optimal. We believe that the conditionκ =O (1) is general
+enough to hold for any standard robust aggregation rule.
+In fact, assuming that there exists ν > 0 such that n≥
+(2+ν)f, all the aforementioned aggregation rules are(f,κ )-
+robust withκ =O (1). Thus, from a theoretical point of
+view, any aggregation rule from Table 1 becomes a good
+candidate in Algorithm 1 when combined with NNM. Then,
+as stated in Corollary 1 below, we obtain optimal Byzantine
+resilience under heterogeneity.
+Corollary 1. Let Assumption 1 hold and recall thatLH is
+L-smooth. Consider Algorithm 1 with γ = 1/L and aggre-
+gationF◦ NNM. IfF is (f,κ )-robust withκ =O(1), then
+Algorithm 1 is (f,ε )-Byzantine resilient with
+ε =O
+(
+f/nG2 + 1/T
+)
+.
+Remark 2. Note that CWTM achieves an order-optimal
+robustness coefﬁcientκ =O(f/n) without the use of NNM,
+whenevern≥ (2 +ν)f for some constant ν > 0. How-
+ever, usingNNM prior to CWTM signiﬁcantly improves its
+empirical performance (see Section 6). We believe that an
+average-case analysis, instead of our worst-case approach,
+could capture this improvement in theory.
+5 Stochastic Extension
+Despite its optimality, our solution for robust D-GD is com-
+putationally demanding, as it requires the honest workers to
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+compute each gradient on the whole dataset. In practice, it
+is more common to consider stochastic variants of D-GD,
+where workers compute gradients on random mini-batches
+of datasets. To accommodate this, we show that NNM can
+also be used to enhance the performance of robust variants
+of distributed stochastic heavy ball (D-SHB) that has been
+recently proven to perform well in Byzantine ML in the
+homogeneous setting [15, 25, 17].
+5.1 Description of Robust D-SHB
+Similarly to robust D-GD, the algorithm proceeds inT iter-
+ations as follows. At every stept∈ [T ], the server holds a
+modelθt−1 and each honest worker holds a local momen-
+tumm(i)
+t−1
+4. The server broadcasts the current model θt−1
+to all the workers for them to update their local momentum.
+To do so, each honest worker samples a mini-batch of data
+S(i)
+t at random fromDi and computes a stochastic estimate
+g(i)
+t of its gradient∇Li(θt−1), deﬁned as
+g(i)
+t = 1
+|S(i)
+t |
+∑
+z∈S(i)
+t
+∇ℓ(θt−1,z ). (2)
+Then, each honest worker updates and sends to the server
+its local momentum
+m(i)
+t =βm(i)
+t−1 + (1−β)g(i)
+t , (3)
+whereβ∈ (0, 1) is the momentum parameter and is shared
+by all the honest users. Similarly to D-SGD, the server
+computes an aggregate of the momentums it receives as
+Rt = F (m(1)
+t ,...,m (n)
+t ). Finally, the server updates the
+model to θt = θt−1−γRt, whereγ > 0 is the learning
+rate. After theT iterations, the server outputs ˆθ by sampling
+uniformly from (θ0,...,θ T−1). The overall procedure for
+robust D-SHB is summarized in Algorithm 3.
+5.2 Analysis of Robust D-SHB with NNM
+We now provide convergence guarantees for robust D-SHB
+with NNM. To do so, we make an additional (standard)
+assumption on the variance of the stochastic gradients.
+Assumption 2 (Bounded variance). For each honest worker
+wi,i∈H , and allθ∈ Rd, it holds that
+1
+m
+∑
+z∈Di
+∥∇θℓ(θ,z )−∇Li (θ)∥2≤σ2.
+We now present in Theorem 2 the extension of our results to
+D-SHB. Essentially, we analyze Algorithm 3 upon assuming
+a constant learning rate, that assumptions 1 and 2 hold, and
+thatLH isL-smooth. For convenience, we introduce the
+4θ0 is set by the server andm(i)
+0 = 0 for all honest workers.
+Algorithm 3: Robust D-SHB
+Input: Initial modelθ0, initial momentumm(i)
+0 = 0 for
+honest workers, robust aggregationF , learning rateγ,
+momentum coefﬁcientβ, and number of stepsT .
+fort = 1...T do
+Server broadcastsθt−1 to all workers;
+for every honest worker i, in parallel do
+Compute a stochastic gradientg(i)
+t as per (2) ;
+Update local momentumm(i)
+t as per (3) ;
+Sendm(i)
+t to the server ;
+Server aggregates the momentums:
+Rt =F (m(1)
+t ,...,m (n)
+t );
+Server updates the model:θt =θt−1−γRt;
+Sample ˆθ uniformly from (θ0,...,θ T−1);
+return ˆθ;
+following numerical constants before stating the theorem:
+a1 := 36,a 2 := 6
+√
+LH(θ0)−L∗,a 3 := 1728L,
+a4 := 288L,a 5 := 6La 2
+2, andL∗ = inf
+θ∈Rd
+LH(θ).
+Theorem 2. Let assumption 1 and 2 hold and recall that
+LH is L-smooth. Let F be a (f,κ )-robust aggregation
+rule. Consider Algorithm 3 with momentum coefﬁcientβ =√1− 24γL, and learning rate
+γ = min
+{ 1
+24L, a2
+2aκσ
+√
+T
+}
+,
+witha2
+κ :=a3κ + a4
+n−f . For allT≥ 1, we have
+E
+[∇LH(ˆθ)
+
+2]
+≤a1κG2 + a2aκσ√
+T
++ a5
+T + a2a4σ
+naκT
+3/2
+,
+where the expectation is over the algorithm’s randomness.
+Tight probabilistic guarantee. The non-vanishing error
+in Theorem 2 is inO(κG2). Hence, this error is tight when
+κ =O(f/n). However, the main difference with robust
+D-GD (Theorem 1) is that the inequality only holds in ex-
+pectation, and therefore may not verify (f,ε )-Byzantine
+resilience. Nevertheless, this result is consistent with the
+state-of-the-art convergence guarantees [26] (Theorem II).
+Note that a subtle difference remains between our result and
+the one from [ 26]. The randomness of our result in The-
+orem 2 only depends on the random subsampling of data
+and the ﬁnal choice of the model. These are natural sources
+of randomness that are usually considered when studying
+stochastic gradient descent [8]. On the other hand, the re-
+sults from [26] also incorporate an additional (exogenous)
+randomness introduced by the shufﬂing operation of Buck-
+eting. This source of randomness cannot be canceled even
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+if true gradients are computed by the workers, and it may
+amplify the uncertainty in the computations (see Section 6
+and Appendix 10 for more details). As a result, we believe
+the probabilistic convergence guarantees from Theorem 2
+to be strictly stronger than those obtained in [26].
+Once again, using Lemma 1, we can show that the tight
+(probabilistic) resilience guarantee implied by Theorem 2
+holds for the larger class of (f,κ )-robust aggregation rules
+withκ =O(1). We formalize this in Corollary 2 below.
+Corollary 2. Let Assumption 1 hold and recall thatLH is
+L-smooth. Consider Algorithm 3 with aggregationF◦NNM,
+under the same setting as Theorem 2. IfF is (f,κ )-robust
+withκ =O(1), then we have
+E
+[∇LH(ˆθ)
+
+2]
+=O
+(
+f/nG2 + 1/
+√
+T
+)
+,
+where the expectation is over the algorithm’s randomness.
+6 Experimental Evaluation
+In this section, we investigate the practical performances of
+NNM. We report on a comprehensive set of experiments
+evaluating our solution against the state-of-the-art on three
+benchmark image classiﬁcation tasks and under ﬁve differ-
+ent Byzantine attacks.
+6.1 Experimental Setup
+Datasets, models, and hyperparameters. We consider
+three image classiﬁcation datasets, namely MNIST [ 31],
+Fashion-MNIST [45], and CIFAR-10 [29]; and we imple-
+ment NNM on top of robust D-SHB. Due to space limitation,
+we only present results on MNIST and CIFAR-10, and defer
+the remaining results to Appendix 15, including experiments
+on D-GD with NNM.
+On MNIST, we train a convolutional neural network (CNN)
+forT = 800 steps using a batch sizeb = 25, with a decay-
+ing learning rate starting at 0.75, and a momentum param-
+eterβ = 0.9. On CIFAR-10, we use a CNN with b = 50,
+T = 2000,γ = 0.25 that decays at step 1500, andβ = 0.9.
+Furthermore, we implement our solution with four aggrega-
+tion rules namely Krum, CWTM, CWMed, and GM5, and
+compare its performance against the Bucketing [26] method
+and vanilla aggregation rules. As a benchmark, we also
+implement vanilla D-SHB (i.e., robust D-SHB with F =
+average) in a setting where there are no faults (f = 0).
+Heterogeneity. We simulate heterogeneity in honest work-
+ers’ data by sampling from the original dataset using a
+Dirichlet distribution of parameterα (as done in [22]). We
+consider three heterogeneity regimes: extreme (α = 0.1),
+5We implement GM using the approximation from [38].
+moderate (α = 1), and low (α = 10). A pictorial representa-
+tion of the resulting heterogeneity as a function ofα can be
+found in Appendix 14. We run our algorithm on MNIST and
+Fashion-MNIST over the whole spectrum of heterogeneity
+deﬁned above. However, as CIFAR-10 is considerably more
+challenging, we restrict the heterogeneity toα∈{ 1, 10}.
+Distributed system and Byzantine attacks. We consider
+a distributed system of n = 17 workers, among which
+f < n/2 can be Byzantine. We vary f ∈ {4, 6, 8} on
+the MNIST dataset, and f∈{ 2, 3, 4} on CIFAR-10. The
+Byzantine workers execute ﬁve state-of-the-art gradient
+attacks, namely Fall of Empires (FOE) [ 47], A Little is
+Enough (ALIE) [ 5], Sign Flipping (SF) [ 3], Label Flip-
+ping [3], and Mimic [26]. Note that for ALIE and FOE, we
+design optimized versions of the attacks, as done in [ 42].
+We explain this further in Appendix 14.
+Reproducibility and reusability. All experiments are run
+with ﬁve seeds from 1 to 5 for reproducibility purposes. The
+code will also be made available for reusability. Additional
+details on the setup can be found in Appendix 14.
+6.2 Empirical Results on MNIST
+In Table 2, we carefully examine the performance of NNM
+on MNIST under extreme heterogeneity (α = 0.1), in com-
+parison with Bucketing and vanilla aggregation rules. For
+every block (i.e., every aggregation rule) and under every
+attack, we highlight in bold the algorithm resulting in the
+highest accuracy in the considered scenario.
+NNM improves robustness. We clearly see that our algo-
+rithm boosts the resilience of aggregation rules in Byzantine
+settings, and provides the most consistent behavior across at-
+tacks. In fact, for Krum, CWMed, and CWTM (i.e., blocks
+1, 3, and 4 in Table 2), NNM outputs the maximal accuracy
+under all attacks. The two other techniques (Bucketing and
+vanilla) showcase much weaker performances and are some-
+times on par with a random classiﬁer (e.g., 10.19% under
+ALIE and 10.28% under FOE for vanilla Krum).
+The case of GM is less evident since the other techniques
+can outperform our method in some settings (e.g., ALIE,
+SF). However, a crucial observation is that there always
+exists at least one attack that considerably deteriorates the
+performance of Bucketing+GM and vanilla GM, whereas
+NNM+GM consistently yields desirable accuracies in all
+attack scenarios. Indeed, the minimum accuracy across
+attacks achieved by NNM+GM is 75.27%, which is con-
+siderably better than Bucketing+GM and vanilla GM with
+39.83% and 57.86% minimum accuracies, respectively.
+Moreover, although vanilla GM scores the highest under
+ALIE, it showcases low accuracies of 65.61% and 57.86%
+under FOE and SF, respectively. Bucketing+GM also fails
+considerably under ALIE and FOE with accuracies far be-
+low 50%. Finally, even though Bucketing+GM scores the
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Aggregation ALIE FOE LF SF Mimic Worst Case
+Krum 10.19±00.61 10 .28±00.57 12.76± 06.25 51.17 ± 06.14 86.78 ± 07.04 10.19±00.61
+1 Bucketing + Krum 44.78±06.18 36 .10±15.70 56.21± 19.49 47.54 ± 11.74 94.92 ± 03.93 36.10±15.70
+NNM + Krum 78.30± 07.78 70.07 ± 04.39 93.07 ± 05.24 82.44 ± 02.86 97.69 ± 00.77 70.07±04.39
+GM 92.01± 04.35 65.61± 12.17 93.94 ± 03.70 57.86 ± 10.42 96.85 ± 01.57 57.86±10.42
+2 Bucketing + GM 39.83 ± 11.35 44.73 ± 16.47 96.22± 02.83 91.30 ± 03.91 97.68 ± 00.91 39.83±11.35
+NNM + GM 81.26 ± 08.91 75.27± 02.69 94.23± 03.20 86.33 ± 03.73 97.17 ± 01.09 75.27±02.69
+CWMed 68.74 ± 06.99 19.48 ± 10.97 33.34 ± 17.02 27.96 ± 09.97 64.01 ± 12.77 19.48±10.97
+3 Bucketing + CWMed 55.86± 10.00 42.80 ± 21.25 70.16 ± 11.65 50.96 ± 16.52 94.43 ± 03.48 42.80±21.25
+NNM + CWMed 80.52± 07.45 75.20 ± 08.80 93.42 ± 02.98 85.10 ± 06.05 97.38 ± 00.70 75.20±08.80
+CWTM 76.16 ± 07.68 69.96 ± 16.57 36.87 ± 21.43 27.45 ± 08.83 89.83 ± 02.83 27.45±08.83
+4 Bucketing + CWTM 55.86± 10.00 42.80 ± 21.25 70.16 ± 11.65 50.96 ± 16.52 94.43 ± 03.48 42.80±21.25
+NNM + CWTM 79.04± 09.19 79.91 ± 03.94 94.75 ± 02.22 84.78 ± 05.78 96.02 ± 03.25 79.04±09.19
+Table 2: Maximum test accuracies (%) acrossT = 800 learning steps on MNIST, under extreme heterogeneity (α = 0.1)
+and ﬁve Byzantine attacks. There are f = 4 Byzantine workers among n = 17 . The baseline accuracy (D-SHB) is
+98.03± 0.70%. In each of the four horizontal blocks and under each attack, we highlight in bold the best accuracy. For
+every method, we also show the worst-case accuracy across attacks, and highlight the best and worst one in each block.
+highest under LF and Mimic, NNM+GM is also excellent
+under these two attacks with accuracies greater than 96%.
+Worst-case performance. We show in the last column
+of Table 2 the worst-case performance (across attacks) of
+every aggregation technique (i.e., every row), and rank them
+within each block from worst (in red) to best (in green).
+We argue that this is a critical metric to correctly evaluate
+Byzantine resilience, as the same algorithm can simulta-
+neously greatly defend against some attacks but perform
+poorly against others. Accordingly, we see from the last
+column that our method always displays the “best” worst
+case. In fact, the lowest accuracy NNM yields across attacks
+and aggregation rules is 70.07% with Krum. Furthermore,
+the worst case performances of the other techniques are
+much worse than ours, yielding values as low as 10.19%
+with Krum and 39.83% with Bucketing+GM.
+Additionally, the worst case performance of Bucketing is al-
+most equally poor for all aggregation rules (36.1%, 39.83%,
+and 42.80%). However, all worst case accuracies of NNM
+are within the range 70-79%. This highly suggests the unre-
+liability of Bucketing, due to its subpar worst case behavior
+independently of the aggregation rule used.
+6.3 Empirical Results on CIFAR-10
+In Figure 1, we plot the performance of NNM and Bucketing
+on CIFAR-10 duringT = 2000 steps of learning, with GM,
+CWMed, CWTM, and Krum as base aggregation rules6. We
+consider two heterogeneity levels ( α = 1 in row 1, and
+α = 10 in row 2), with two Byzantine workers executing
+the ALIE and LF attacks.
+Heterogeneity impairs learning. Our ﬁrst observation is
+that stronger heterogeneity regimes hinder the learning, as
+expected. As can be seen in Figure 1, increasingα from 1 to
+10 signiﬁcantly improves all NNM aggregations (especially
+under ALIE), whereas Bucketing+CWMed still stagnates at
+10% and Bucketing+GM barely reaches 30%.
+Empirical superiority of NNM. Under ALIE, we clearly
+see that NNM greatly outperforms Bucketing in both het-
+erogeneity regimes. In particular, ALIE deteriorates the
+learning when using Bucketing with GM and CWMed, with
+both methods reaching a ﬁnal accuracy close to 10% when
+α = 1 . Although Bucketing+Krum has a better perfor-
+mance, it still displays a lower accuracy and a much larger
+variance than any NNM aggregation. On the other hand,
+we observe that LF is a much weaker attack. Although all
+aggregation methods are able to converge to a desirable ac-
+curacy, our algorithm still portrays better convergence rates
+than Bucketing. This is particularly apparent for α = 10
+where all NNM aggregations almost exactly match D-SHB’s
+convergence rate, whereas Bucketing converges slower, es-
+pecially in the case of Krum. The remaining three attacks
+6In the considered setting, Bucketing with CWMed and CWTM
+are exactly equivalent.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+Figure 1: Experiments on CIFAR-10 withf = 2 Byzantine workers amongn = 17. The Byzantine workers execute the
+ALIE (column 1) and LF (column 2) attacks. 1st row: moderate heterogeneity (α = 1). 2nd row: low heterogeneity (α = 10).
+have a similar behavior to LF and are in Appendix 15.
+7 Conclusion and Future Work
+We show that robust D-GD enhanced by NNM is an opti-
+mal solution for Byzantine ML under heterogeneity. We
+also derive similar results for robust D-SHB (with NNM) in
+expectation. We believe that an interesting future direction
+would be to tighten these guarantees by investigating almost
+sure convergence rates for our stochastic solution. Such
+guarantees have been recently introduced in the Byzantine-
+free setting for SHB [ 41, 33, 18]. Yet, adapting them to
+our setting remains an open question. In general, we be-
+lieve subsequent works on Byzantine ML should strive to
+obtain almost sure convergence guarantees (instead of ex-
+pectation), precluding the use of unnecessary randomness
+and certifying the robustness of these algorithms.
+Acknowledgements
+This work has been supported in part by SNSF grants
+200021 200477 and 200021 182542, and an EPFL-
+Ecocloud postdoctoral grant. The authors are thankful to
+the anonymous reviewers for their constructive comments.
+References
+[1] Mart´ın Abadi, Ashish Agarwal, Paul Barham, Eugene
+Brevdo, Zhifeng Chen, Craig Citro, Greg Corrado,
+Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay
+Ghemawat, Ian Goodfellow, Andrew Harp, Geoffrey
+Irving, Michael Isard, Yangqing Jia, Rafal Jozefow-
+icz, Lukasz Kaiser, Manjunath Kudlur, Josh Leven-
+berg, Dan Man´e, Rajat Monga, Sherry Moore, Derek
+Murray, Chris Olah, Mike Schuster, Jonathon Shlens,
+Benoit Steiner, Ilya Sutskever, Kunal Talwar, Paul
+Tucker, Vincent Vanhoucke, Vijay Vasudevan, Fer-
+nanda Vi´egas, Oriol Vinyals, Pete Warden, Martin
+Wattenberg, Martin Wicke, Yuan Yu, and Xiaoqiang
+Zheng. Tensorﬂow: Large-scale machine learning on
+heterogeneous distributed systems, 2015.
+[2] Anish Acharya, Abolfazl Hashemi, Prateek Jain, Su-
+jay Sanghavi, Inderjit S. Dhillon, and Ufuk Topcu.
+Robust training in high dimensions via block coordi-
+nate geometric median descent. In Gustau Camps-
+Valls, Francisco J. R. Ruiz, and Isabel Valera, editors,
+Proceedings of The 25th International Conference on
+Artiﬁcial Intelligence and Statistics , volume 151 of
+Proceedings of Machine Learning Research , pages
+11145–11168. PMLR, 28–30 Mar 2022.
+[3] Zeyuan Allen-Zhu, Faeze Ebrahimianghazani, Jerry
+Li, and Dan Alistarh. Byzantine-resilient non-convex
+stochastic gradient descent. In International Confer-
+ence on Learning Representations, 2020.
+[4] Noga Alon, Yossi Matias, and Mario Szegedy. The
+space complexity of approximating the frequency mo-
+ments. In Proceedings of the twenty-eighth annual
+ACM symposium on Theory of computing, pages 20–
+29, 1996.
+[5] Moran Baruch, Gilad Baruch, and Yoav Goldberg.
+A little is enough: Circumventing defenses for dis-
+tributed learning. In Advances in Neural Information
+Processing Systems 32: Annual Conference on Neural
+Information Processing Systems 2019, 8-14 December
+2019, Long Beach, CA, USA, 2019.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+[6] Dimitri Bertsekas and John Tsitsiklis. Parallel and
+distributed computation: numerical methods. Athena
+Scientiﬁc, 2015.
+[7] Peva Blanchard, El Mahdi El Mhamdi, Rachid Guer-
+raoui, and Julien Stainer. Machine learning with ad-
+versaries: Byzantine tolerant gradient descent. In
+I. Guyon, U. V . Luxburg, S. Bengio, H. Wallach,
+R. Fergus, S. Vishwanathan, and R. Garnett, editors,
+Advances in Neural Information Processing Systems
+30, pages 119–129. Curran Associates, Inc., 2017.
+[8] L´eon Bottou, Frank E Curtis, and Jorge Nocedal. Op-
+timization methods for large-scale machine learning.
+Siam Review, 60(2):223–311, 2018.
+[9] Stephen Boyd and Lieven Vandenberghe. Convex opti-
+mization. Cambridge university press, 2004.
+[10] Moses Charikar, Jacob Steinhardt, and Gregory
+Valiant. Learning from untrusted data. In Proceed-
+ings of the 49th Annual ACM SIGACT Symposium on
+Theory of Computing, pages 47–60, 2017.
+[11] Yudong Chen, Lili Su, and Jiaming Xu. Distributed
+statistical machine learning in adversarial settings:
+Byzantine gradient descent. Proc. ACM Meas. Anal.
+Comput. Syst., 1(2), dec 2017.
+[12] Simon S Du, Chi Jin, Jason D Lee, Michael I Jordan,
+Aarti Singh, and Barnabas Poczos. Gradient descent
+can take exponential time to escape saddle points. Ad-
+vances in neural information processing systems, 30,
+2017.
+[13] El Mahdi El Mhamdi, Sadegh Farhadkhani, Rachid
+Guerraoui, Arsany Guirguis, Lˆe Nguyˆen Hoang, and
+S´ebastien Rouault. Collaborative learning in the jun-
+gle (decentralized, byzantine, heterogeneous, asyn-
+chronous and nonconvex learning). In Thirty-Fifth
+Conference on Neural Information Processing Sys-
+tems, 2021.
+[14] El Mahdi El Mhamdi, Rachid Guerraoui, and
+S´ebastien Rouault. The hidden vulnerability of dis-
+tributed learning in Byzantium. In Jennifer Dy and
+Andreas Krause, editors, Proceedings of the 35th Inter-
+national Conference on Machine Learning, volume 80
+of Proceedings of Machine Learning Research, pages
+3521–3530. PMLR, 10–15 Jul 2018.
+[15] El Mahdi El Mhamdi, Rachid Guerraoui, and
+S´ebastien Louis Alexandre Rouault. Distributed mo-
+mentum for byzantine-resilient stochastic gradient de-
+scent. In 9th International Conference on Learning
+Representations (ICLR), number CONF, 2021.
+[16] Sadegh Farhadkhani, Rachid Guerraoui, Nirupam
+Gupta, L ˆe Nguy ˆen Hoang, Rafael Pinot, and John
+Stephan. Making byzantine decentralized learning
+efﬁcient. arXiv preprint arXiv:2209.10931, 2022.
+[17] Sadegh Farhadkhani, Rachid Guerraoui, Nirupam
+Gupta, Rafael Pinot, and John Stephan. Byzantine
+machine learning made easy by resilient averaging
+of momentums. In Kamalika Chaudhuri, Stefanie
+Jegelka, Le Song, Csaba Szepesvari, Gang Niu, and
+Sivan Sabato, editors, Proceedings of the 39th Interna-
+tional Conference on Machine Learning, volume 162
+of Proceedings of Machine Learning Research, pages
+6246–6283. PMLR, 17–23 Jul 2022.
+[18] S´ebastien Gadat, Fabien Panloup, and Soﬁane Saadane.
+Stochastic heavy ball. Electronic Journal of Statistics,
+12(1):461–529, 2018.
+[19] Saeed Ghadimi and Guanghui Lan. Accelerated gra-
+dient methods for nonconvex nonlinear and stochas-
+tic programming. Mathematical Programming ,
+156(1):59–99, 2016.
+[20] Nirupam Gupta and Nitin H Vaidya. Fault-tolerance
+in distributed optimization: The case of redundancy.
+In Proceedings of the 39th Symposium on Principles
+of Distributed Computing, pages 365–374, 2020.
+[21] Kiana Hajebi, Yasin Abbasi-Yadkori, Hossein Shah-
+bazi, and Hong Zhang. Fast approximate nearest-
+neighbor search with k-nearest neighbor graph. In
+Twenty-Second International Joint Conference on Arti-
+ﬁcial Intelligence, 2011.
+[22] Tzu-Ming Harry Hsu, Hang Qi, and Matthew Brown.
+Measuring the effects of non-identical data distribution
+for federated visual classiﬁcation, 2019.
+[23] Mark R Jerrum, Leslie G Valiant, and Vijay V Vazirani.
+Random generation of combinatorial structures from
+a uniform distribution. Theoretical computer science,
+43:169–188, 1986.
+[24] Peter Kairouz, H. Brendan McMahan, Brendan Avent,
+Aur´elien Bellet, Mehdi Bennis, Arjun Nitin Bhagoji,
+Kallista Bonawitz, Zachary Charles, Graham Cor-
+mode, Rachel Cummings, Rafael G. L. D’Oliveira,
+Hubert Eichner, Salim El Rouayheb, David Evans,
+Josh Gardner, Zachary Garrett, Adri`a Gasc´on, Badih
+Ghazi, Phillip B. Gibbons, Marco Gruteser, Zaid Har-
+chaoui, Chaoyang He, Lie He, Zhouyuan Huo, Ben
+Hutchinson, Justin Hsu, Martin Jaggi, Tara Javidi,
+Gauri Joshi, Mikhail Khodak, Jakub Konecn´y, Alek-
+sandra Korolova, Farinaz Koushanfar, Sanmi Koyejo,
+Tancr`ede Lepoint, Yang Liu, Prateek Mittal, Mehryar
+Mohri, Richard Nock, Ayfer ¨Ozg¨ur, Rasmus Pagh,
+Hang Qi, Daniel Ramage, Ramesh Raskar, Mariana
+Raykova, Dawn Song, Weikang Song, Sebastian U.
+Stich, Ziteng Sun, Ananda Theertha Suresh, Florian
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Tram`er, Praneeth Vepakomma, Jianyu Wang, Li Xiong,
+Zheng Xu, Qiang Yang, Felix X. Yu, Han Yu, and Sen
+Zhao. Advances and open problems in federated learn-
+ing. Foundations and Trends® in Machine Learning,
+14(1–2):1–210, 2021.
+[25] Sai Praneeth Karimireddy, Lie He, and Martin Jaggi.
+Learning from history for byzantine robust optimiza-
+tion. International Conference On Machine Learning,
+Vol 139, 139, 2021.
+[26] Sai Praneeth Karimireddy, Lie He, and Martin Jaggi.
+Byzantine-robust learning on heterogeneous datasets
+via bucketing. In International Conference on Learn-
+ing Representations, 2022.
+[27] Sai Praneeth Karimireddy, Satyen Kale, Mehryar
+Mohri, Sashank Reddi, Sebastian Stich, and
+Ananda Theertha Suresh. Scaffold: Stochastic con-
+trolled averaging for federated learning. In Interna-
+tional Conference on Machine Learning, pages 5132–
+5143. PMLR, 2020.
+[28] Jakub Kone ˇcn`y, H Brendan McMahan, Felix X
+Yu, Peter Richt ´arik, Ananda Theertha Suresh, and
+Dave Bacon. Federated learning: Strategies for im-
+proving communication efﬁciency. arXiv preprint
+arXiv:1610.05492, 2016.
+[29] Alex Krizhevsky, Vinod Nair, and Geoffrey Hinton.
+The cifar-10 dataset. online: http://www. cs. toronto.
+edu/kriz/cifar. html, 55(5), 2014.
+[30] Leslie Lamport, Robert Shostak, and Marshall Pease.
+The byzantine generals problem.ACM Trans. Program.
+Lang. Syst., 4(3):382–401, jul 1982.
+[31] Yann LeCun and Corinna Cortes. MNIST handwritten
+digit database. 2010.
+[32] Liping Li, Wei Xu, Tianyi Chen, Georgios B. Gian-
+nakis, and Qing Ling. Rsa: Byzantine-robust stochas-
+tic aggregation methods for distributed learning from
+heterogeneous datasets. In Proceedings of the Thirty-
+Third AAAI Conference on Artiﬁcial Intelligence and
+Thirty-First Innovative Applications of Artiﬁcial In-
+telligence Conference and Ninth AAAI Symposium
+on Educational Advances in Artiﬁcial Intelligence ,
+AAAI’19/IAAI’19/EAAI’19. AAAI Press, 2019.
+[33] Jun Liu and Ye Yuan. On almost sure convergence
+rates of stochastic gradient methods. In Po-Ling Loh
+and Maxim Raginsky, editors, Proceedings of Thirty
+Fifth Conference on Learning Theory, volume 178 of
+Proceedings of Machine Learning Research , pages
+2963–2983. PMLR, 02–05 Jul 2022.
+[34] Shuo Liu, Nirupam Gupta, and Nitin H. Vaidya. Ap-
+proximate byzantine fault-tolerance in distributed opti-
+mization. In Proceedings of the 2021 ACM Symposium
+on Principles of Distributed Computing , PODC’21,
+page 379–389, New York, NY , USA, 2021. Associa-
+tion for Computing Machinery.
+[35] Marius Muja and David G Lowe. Scalable nearest
+neighbor algorithms for high dimensional data. IEEE
+transactions on pattern analysis and machine intelli-
+gence, 36(11):2227–2240, 2014.
+[36] A.S. Nemirovsky, D.B. din, and D.B. Yudin. Problem
+Complexity and Method Efﬁciency in Optimization. A
+Wiley-Interscience publication. Wiley, 1983.
+[37] Yurii Nesterov et al. Lectures on convex optimization,
+volume 137. Springer, 2018.
+[38] Krishna Pillutla, Sham M. Kakade, and Zaid Har-
+chaoui. Robust aggregation for federated learning.
+IEEE Transactions on Signal Processing , 70:1142–
+1154, 2022.
+[39] Boris T Polyak. Some methods of speeding up the
+convergence of iteration methods. Ussr computational
+mathematics and mathematical physics , 4(5):1–17,
+1964.
+[40] Peter J Rousseeuw. Multivariate estimation with high
+breakdown point. Mathematical statistics and appli-
+cations, 8(37):283–297, 1985.
+[41] Othmane Sebbouh, Robert M Gower, and Aaron De-
+fazio. Almost sure convergence rates for stochastic
+gradient descent and stochastic heavy ball. In Confer-
+ence on Learning Theory, pages 3935–3971. PMLR,
+2021.
+[42] Virat Shejwalkar and Amir Houmansadr. Manipulating
+the byzantine: Optimizing model poisoning attacks
+and defenses for federated learning. In NDSS, 2021.
+[43] Christopher G Small. A survey of multidimensional
+medians. International Statistical Review/Revue Inter-
+nationale de Statistique, pages 263–277, 1990.
+[44] Jiyuan Tu, Weidong Liu, Xiaojun Mao, and Xi Chen.
+Variance reduced median-of-means estimator for
+byzantine-robust distributed inference. J. Mach. Learn.
+Res., 22:84–1, 2021.
+[45] Han Xiao, Kashif Rasul, and Roland V ollgraf.
+Fashion-mnist: a novel image dataset for benchmark-
+ing machine learning algorithms. arXiv preprint
+arXiv:1708.07747, 2017.
+[46] Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta.
+Generalized byzantine-tolerant sgd, 2018.
+[47] Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta.
+Fall of empires: Breaking byzantine-tolerant SGD by
+inner product manipulation. In Proceedings of the
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Thirty-Fifth Conference on Uncertainty in Artiﬁcial
+Intelligence, UAI 2019, Tel Aviv, Israel, July 22-25,
+2019, page 83, 2019.
+[48] Dong Yin, Yudong Chen, Ramchandran Kannan, and
+Peter Bartlett. Byzantine-robust distributed learning:
+Towards optimal statistical rates. In Jennifer Dy and
+Andreas Krause, editors, Proceedings of the 35th Inter-
+national Conference on Machine Learning, volume 80
+of Proceedings of Machine Learning Research, pages
+5650–5659. PMLR, 10–15 Jul 2018.
+Supplementary Materials:
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Organization of the Appendix
+Appendix 8 contains proofs related to (f,κ )-robustness. Appendix 9 contains the analysis of NNM (proof of Lemma 1).
+Appendix 10 contains a formal discussion on Bucketing [26]. Appendix 11 contains the analysis of robust D-GD (proof
+of Theorem 1). Appendix 12 contains the analysis of robust D-GD with NNM (proof of Corollary 1), and the Byzantine
+resilience lower bound (Proposition 1). Appendix 13 contains the analysis of robust D-SHB withNNM (proofs of Theorem 2
+and Corollary 2). Appendix 14 contains details on the experimental setup. Appendix 15 contains all experimental results.
+8 Robustness Analysis
+In this section, we prove all our claims related to (f,κ )-robustness. In Section 8.1, we prove several existing aggregation
+rules to be (f,κ )-robust and give their exact robustness coefﬁcients. We then establish the tightness of our analysis in
+Section 8.2 by proving a universal lower bound on κ, and an aggregation-speciﬁc lower bound. Finally, we prove that
+(f,κ )-robustness uniﬁes existing robustness deﬁnitions in Section 8.3.
+We ﬁrst recall the deﬁnition of (f,κ )-robustness:
+Deﬁnition 2. Letf <n/2 andκ≥ 0. An aggregation ruleF is said to be (f,κ )-robust if for any vectorsx1,..., x n∈ Rd,
+and any setS⊆ [n] of sizen−f,
+∥F (x1,..., x n)−xS∥2≤ κ
+|S|
+∑
+i∈S
+∥xi−xS∥2
+wherexS = 1
+|S|
+∑
+i∈Sxi. We refer toκ as the robustness coefﬁcient.
+8.1 (f,κ )-robust Aggregation Rules
+In this section, we prove that coordinate-wise Trimmed Mean (CWTM) [48], Krum [7], Geometric Median (GM) [43], and
+coordinate-wise Median (CWMed) [48] all satisfy (f,κ )-robustness.
+8.1.1 Trimmed Mean
+Letx∈ Rd, we denote by [x]k, the k-th coordinate of x. Given the input vectors x1,..., x n∈ Rd, we let τk denote a
+permutation on [n] that sorts thek-th coordinate of the input vectors in non-decreasing order, i.e., [xτk(1)]k≤ [xτk(2)]k≤
+... ≤ [xτk(n)]k. Then, the coordinate-wise trimmed mean of x1,..., x n, denoted by CWTM(x1,...,x n), is a vector in
+Rd whosek-th coordinate is deﬁned as follows,
+[CWTM(x1,...,x n)]k := 1
+n− 2f
+n−f∑
+j=f +1
+[xτk(j)]k.
+We ﬁrst show a general lemma simplifying the analysis of (f,κ )-robustness for coordinate-wise aggregations, by reducing
+the analysis to scalars without loss of generality. Speciﬁcally, we show that ifF is a coordinate-wise function, i.e., each
+k-th coordinate ofF denoted byFk only depends on the respectivek-th coordinates of the inputs [x1]k,..., [xn]k, then
+coordinate-wise robustness implies overall robustness.
+Lemma 2. Assume thatF : Rd×n→ Rd is a coordinate-wise aggregation function, i.e., there existd real-valued functions
+F1,...,F d : Rn→ R such that for allx1,...,x n∈ Rd, [F (x1,...,x n)]k =Fk([x1]k,..., [xn]k). If for eachk∈ [d],Fk
+is (f,κ )-robust thenF is (f,κ )-robust.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Proof. Considern arbitrary vectors in Rd,x1,...,x n, and an arbitrary setS⊆ [n] such that|S| =n−f. Assume that for
+eachk∈ [d],Fk is (f,κ )-robust. SinceF is assume to be a coordinate-wise aggregation function, we have
+∥F (x1,...,x n)−xS∥2 =
+d∑
+k=1
+|Fk([x1]k,..., [xn]k)− [xS]k|2. (4)
+Since for eachk∈ [d],Fk is (f,κ )-robust, we have
+d∑
+k=1
+|Fk([x1]k,..., [xn]k)− [xS]k|2≤
+d∑
+k=1
+κ
+|S|
+∑
+i∈S
+|[xi]k− [xS]k|2 = κ
+|S|
+∑
+i∈S
+d∑
+k=1
+|[xi]k− [xS]k|2 = κ
+|S|
+∑
+i∈S
+∥xi−xS∥2.
+Substituting from above in (4) concludes the proof.
+We now show an important property in Lemma 3 below on the sorting of real values that proves essential in obtaining a tight
+(f,κ )-robustness guarantee for trimmed mean.
+Lemma 3. Consider n real values x1,...,x n be such that x1 ≤ ... ≤ xn. Let S ⊆ [n] of size|S| = n−f, and
+I :={f + 1,...,n −f}. We obtain that
+∑
+i∈I\S
+|xi−xS|2≤
+∑
+i∈S\I
+|xi−xS|2.
+Proof. First, note that, as|I| =n− 2f and|S| =n−f,|I\S|≤ f and|S\I|≥ f. Thus,|I\S|≤| S\I|. To prove
+the lemma, we show that there exists an injectionφ: I\S→S\I such that
+∀i∈I\S, |xi−xS|≤
+⏐⏐xφ(i)−xS
+⏐⏐. (5)
+As|I\S|≤| S\I|, we have∑
+i∈I\S
+⏐⏐xφ(i)−xS
+⏐⏐2
+≤∑
+i∈S\I|xi−xS|2. Hence, (5) proves the lemma.
+We denote by B the complement of S in [n], i.e., B = [n]\S. Therefore, |B| = f andI\S = I∩B. We denote
+I + :={n−f + 1,...,n }, andI− :={1,...,f } to be the indices of values that are larger (or equal to) and smaller (or
+equal to) the values inI, respectively. Let|I∩B| =q. AsB = [n]\S, we obtain that
+⏐⏐I +∩S
+⏐⏐ =f−
+⏐⏐I +∩B
+⏐⏐≥f−|B\ (I∩B)| =f− (f−q) =q. (6)
+Similarly, we obtain that
+⏐⏐I−∩S
+⏐⏐≥q. (7)
+Recall that q =|I∩B| whereI\S = I∩B. Therefore, due to (6) and (7), there exists an injection from I\S to
+(I−∩S)× (I +∩S). Let ψ be such an injection. For each i∈ I\S, ψ(i) is a pair, denoted by (ψ−(i), ψ+(i)), in
+(I−∩S)× (I +∩S). Consider an arbitraryi∈I\S. By deﬁnition of I− andI +, we have
+xψ−(i)≤xi≤xψ+(i).
+Therefore, for any real valuey,
+|xi−y|≤ max
+{⏐⏐xψ+(i)−y
+⏐⏐,
+⏐⏐xψ−(i)−y
+⏐⏐}
+.
+The above proves (5), where the injectionφ is deﬁned asφ(i) = arg maxj∈{ψ+(i),ψ−(i)}|xj−xS| for alli∈I\S.
+We now prove the(f, κ)-robustness property of trimmed mean in the proposition below.
+Proposition 2. Letn∈ N∗ andf <n/2. CWTM is (f,κ )-robust withκ = 6f
+n−2f
+(
+1 + f
+n−2f
+)
+.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Proof. First, note that trimmed mean Trimmed Mean is a coordinate-wise aggregation, deﬁned in Lemma 2. Thus, due to
+Lemma 2, it sufﬁces to show that Trimmed Mean is (f,κ )-robust in the scalar domain, i.e., whend = 1.
+Letx1,..., x n∈ R and, without loss of generality, let us assume thatx1≤... ≤xn. We denote byI :={f +1,...,n −f},
+and let S be an arbitrary subset of [n] of size n−f. Recall that the set of indices selected by TM (x1,..., x n) =
+1
+n−2f
+∑
+i∈Ixi. We obtain that
+|CWTM(x1,...,x n)−xS|2 =
+⏐⏐⏐⏐⏐
+1
+n− 2f
+∑
+i∈I
+xi−xS
+⏐⏐⏐⏐⏐
+2
+=
+⏐⏐⏐⏐⏐
+1
+n− 2f
+∑
+i∈I
+(xi−xS)
+⏐⏐⏐⏐⏐
+2
+=
+⏐⏐⏐⏐⏐
+1
+n− 2f
+∑
+i∈I
+(xi−xS)− 1
+n− 2f
+∑
+i∈S
+(xi−xS)
+⏐⏐⏐⏐⏐
+2 (
+as
+∑
+i∈S
+(xi−xS) = 0
+)
+= 1
+(n− 2f)2
+⏐⏐⏐⏐⏐⏐
+∑
+i∈I\S
+(xi−xS)−
+∑
+i∈S\I
+(xi−xS)
+⏐⏐⏐⏐⏐⏐
+2
+.
+Using Jensen’s inequality above, we obtain that
+|CWTM(x1,...,x n)−xS|2≤|I\S| +|S\I|
+(n− 2f)2
+
+∑
+i∈I\S
+|xi−xS|2 +
+∑
+i∈S\I
+|xi−xS|2
+
+.
+Note that|I\S| =|I∪S|−|S|≤ n−(n−f) =f. Similarly,|S\I| =|I∪S|−|I|≤ n−(n−2f) = 2f. Accordingly,
+|I\S| +|S\I|≤ 3f. Therefore, we have
+|CWTM(x1,...,x n)−xS|2≤ 3f
+(n− 2f)2
+
+∑
+i∈I\S
+|xi−xS|2 +
+∑
+i∈S\I
+|xi−xS|2
+
+.
+Recall from Lemma 3 that∑
+i∈I\S|xi−xS|2≤∑
+i∈S\I|xi−xS|2. Using this fact above we obtain that
+|CWTM(x1,...,x n)−xS|2≤ 6f
+(n− 2f)2
+∑
+i∈S\I
+|xi−xS|2≤ 6f
+(n− 2f)2
+∑
+i∈S
+|xi−xS|2.
+Finally, as f
+(n−2f )2 = f (n−f )
+(n−2f )2
+(
+1
+n−f
+)
+=
+(
+f
+n−2f +
+(
+f
+n−2f
+)2)
+1
+n−f , we obtain that
+|CWTM(x1,...,x n)−xS|2≤ 6
+(
+f
+n− 2f +
+( f
+n− 2f
+)2)
+1
+|S|
+∑
+i∈S
+|xi−xS|2. (8)
+The above concludes the proof.
+8.1.2 Krum
+In this section, we study a slight adaptation of the Krum algorithm ﬁrst introduced in [7]. Essentially, given the input vectors
+x1,..., x n, Krum outputs the vector that is the nearest to its neighbors upon discarding f (as opposed to f + 1 in the
+original version) furthest vectors. Speciﬁcally, we denote byNj the set the of indices of then−f nearest neighbors ofxj
+in{x1,...,x n}, with ties arbitrarily broken. Krum outputs the vectorxk∗ such that
+k∗∈ arg min
+j∈[n]
+∑
+i∈Nj
+∥xj−xi∥2,
+with ties arbitrarily broken if the set of minimizers above includes more than one element.
+Proposition 3. Letn∈ N∗ andf <n/2. Krum is (f,κ )-robust withκ = 6(1 + f
+n−2f ).
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Proof. Letn∈ N,f <n/2, andx1,...,x n∈ Rd. Consider any subset S⊆ [n] of size|S| = n−f. In the following,
+for everyj∈ [n], we denote byNj the set the of indices of then−f nearest neighbors ofxj in{x1,...,x n}, with ties
+arbitrarily broken. Observe that this implies, for everyj∈ [n], that
+∑
+i∈Nj
+∥xj−xi∥2≤
+∑
+i∈S
+∥xj−xi∥2. (9)
+Letk∗∈ [n] be the index selected by Krum. By deﬁnition, it holds that k∗∈ arg minj∈[n]
+∑
+i∈Nj∥xj−xi∥2. Therefore,
+leveraging (9) we have
+∑
+i∈Nk∗
+∥xk∗−xi∥2 = min
+j∈[n]
+∑
+i∈Nj
+∥xj−xi∥2≤ min
+j∈S
+∑
+i∈Nj
+∥xj−xi∥2≤ 1
+|S|
+∑
+j∈S
+∑
+i∈Nj
+∥xj−xi∥2
+≤ 1
+|S|
+∑
+j∈S
+∑
+i∈S
+∥xj−xi∥2 = 1
+|S|
+∑
+i,j∈S
+∥xj−xS− (xi−xS)∥2
+= 1
+|S|
+∑
+i,j∈S
+(
+∥xj−xS∥2 +∥xi−xS∥2− 2⟨xj−xS, xi−xS⟩
+)
+= 1
+|S|
+[ ∑
+i,j∈S
+∥xj−xS∥2 +
+∑
+i,j∈S
+∥xi−xS∥2− 2
+∑
+i,j∈S
+⟨xj−xS, xi−xS⟩
+]
+= 1
+|S|
+[
+2|S|
+∑
+i∈S
+∥xi−xS∥2− 2
+∑
+i,j∈S
+⟨xj−xS, xi−xS⟩
+]
+= 1
+|S|
+[
+2|S|
+∑
+i∈S
+∥xi−xS∥2− 2
+∑
+i∈S
+⟨∑
+j∈S
+(xj−xS)
+  
+=0
+, xi−xS
+⟩]
+= 2
+∑
+i∈S
+∥xi−xS∥2. (10)
+Now, using Jensen’s inequality, we can write for alli∈S,
+∥xk∗−xS∥2≤ 2∥xk∗−xi∥2 + 2∥xi−xS∥2.
+Therefore, by rearranging the terms, we have for alli∈S,
+∥xk∗−xi∥2≥ 1
+2∥xk∗−xS∥2−∥xi−xS∥2.
+Together with the fact that|S∩Nk∗| =|S| +|Nk∗|−| S∪Nk∗|≥ (n−f) + (n−f)−n = n− 2f, the previous
+inequality implies that
+∑
+i∈Nk∗
+∥xk∗−xi∥2≥
+∑
+i∈S∩Nk∗
+∥xk∗−xi∥2≥|S∩Nk∗| 1
+2∥xk∗−xS∥2−
+∑
+i∈S∩Nk∗
+∥xi−xS∥2
+≥ n− 2f
+2 ∥xk∗−xS∥2−
+∑
+i∈S∩Nk∗
+∥xi−xS∥2.
+By rearranging the terms, and invoking (10) we can write
+∥xk∗−xS∥2≤ 2
+n− 2f
+
+ ∑
+i∈Nk∗
+∥xk∗−xi∥2 +
+∑
+i∈S∩Nk∗
+∥xi−xS∥2
+
+
+≤ 2
+n− 2f
+
+ ∑
+i∈Nk∗
+∥xk∗−xi∥2 +
+∑
+i∈S
+∥xi−xS∥2
+
+
+≤ 2
+n− 2f
+[
+2
+∑
+i∈S
+∥xi−xS∥2 +
+∑
+i∈S
+∥xi−xS∥2
+]
+= 6
+n− 2f
+∑
+i∈S
+∥xi−xS∥2 = 6(n−f)
+n− 2f
+1
+|S|
+∑
+i∈S
+∥xi−xS∥2.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+We conclude by remarking that n−f
+n−2f = 1 + f
+n−2f .
+8.1.3 Geometric Median
+The Geometric Median ofx1,..., x n∈ Rd denoted by GM(x1,...,x n), is deﬁned to be a vector that minimizes the sum
+of theℓ2-distances to these vectors. Speciﬁcally, we have
+GM(x1,...,x n)∈ arg min
+y∈Rd
+n∑
+i=1
+∥y−xi∥.
+Proposition 4. Letn∈ N∗ andf <n/2. GM is (f,κ )-robust withκ = 4
+(
+1 + f
+n−2f
+)2
+.
+Proof. The proof is similar to the analysis of Geometric Median in [ 26]. For completeness, we provide the full proof
+adapted to the deﬁnition of (f,κ )-robustness. Let us denote byx∗ := GM(x1,...,x n), the geometric median of the input
+vectors. Consider any subsetS⊆ [n] of size|S| =n−f. By the reverse triangle inequality, for anyi∈S, we have
+∥x∗−xi∥≥∥ x∗−xS∥−∥ xi−xS∥. (11)
+Similarly, for anyi∈ [n]\S, we obtain
+∥x∗−xi∥≥∥ xi−xS∥−∥ x∗−xS∥. (12)
+Summing up (11) and (12) over all input vectors we obtain
+∑
+i∈[n]
+∥x∗−xi∥≥ (n− 2f)∥x∗−xS∥ +
+∑
+i∈[n]\S
+∥xi−xS∥−
+∑
+i∈S
+∥xi−xS∥.
+Rearranging the terms, we obtain
+∥x∗−xS∥≤ 1
+n− 2f
+
+∑
+i∈[n]
+∥x∗−xi∥−
+∑
+i∈[n]\S
+∥xi−xS∥ +
+∑
+i∈S
+∥xi−xS∥
+
+
+Note that by the deﬁnition of the geometric median, we have
+∑
+i∈[n]
+∥x∗−xi∥≤
+∑
+i∈[n]
+∥xS−xi∥.
+Therefore,
+∥x∗−xS∥≤ 1
+n− 2f
+
+∑
+i∈[n]
+∥xi−xS∥−
+∑
+i∈[n]\S
+∥xi−xS∥ +
+∑
+i∈S
+∥xi−xS∥
+
+≤ 2
+n− 2f
+∑
+i∈S
+∥xi−xS∥.
+Squaring both sides and using Jensen’s inequality, we obtain
+∥x∗−xS∥2≤ 4(n−f)
+(n− 2f)2
+∑
+i∈S
+∥xi−xS∥2 = 4(n−f)2
+(n− 2f)2· 1
+n−f
+∑
+i∈S
+∥xi−xS∥2
+= 4
+(
+1 + f
+n− 2f
+)2 1
+|S|
+∑
+i∈S
+∥xi−xS∥2.
+This is the desired result.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+8.1.4 Median
+For input vectors x1,..., x n, their coordinate-wise median, denoted by CWMed(x1,...,x n), is deﬁned to be a vector
+whosek-th coordinate, for allk∈ [d], is deﬁned to be
+[CWMed (x1,...,x n)]k := Median ([x1]k,... [xn]k). (13)
+Proposition 5. Letn∈ N∗ andf <n/2. CWMed is (f,κ )-robust withκ = 4
+(
+1 + f
+n−2f
+)2
+.
+Proof. Given that Geometric Median coincides with Median for one-dimensional inputs, it follows from Proposition 4 that,
+for one-dimensional inputs, Median is (f,κ )-robust withκ = 4
+(
+1 + f
+n−2f
+)2
+. Since Median is coordinate-wise, we deduce
+from Lemma 2 that the latter holds for anyd-dimensional inputs, and conclude the proof.
+8.2 Lower Bounds
+In this section, we establish the tightness of our analysis by proving a universal lower bound onκ in Proposition 6, and an
+aggregation-speciﬁc lower bound in Proposition 7.
+Proposition 6. Letn∈ N∗,f <n andκ> 0. IfF is (f,κ )-robust, thenn> 2f andκ≥ f
+n−2f .
+Proof. Letn∈ N∗,f <n andκ> 0. Assume thatF is (f,κ )-resilient averaging aggregation rule. Considerx1,..., x n
+such thatx1 = ... = xn−f = 0, andxn−f +1 = ... = xn = 1. Let us ﬁrst consider a set S0 ={1,...,n −f}. Since
+|S0| =n−f, by deﬁnition, we have
+|F (x1,..., x n)−xS0|2≤κ 1
+n−f
+∑
+i∈S0
+|xi−xS0|2 = 0.
+Thus,F (x1,..., x n) =xS0 = 0.
+Now, consider another set S1 ={f + 1,...,n }. Observe that we necessarily have n >2f. Assume by contradiction
+that 2f≥n, i.e.,f + 1≥n−f + 1. This implies that, for every i∈S1,xi = 1. Therefore, xS1 = 1. And, since F is
+(f,κ )-robust, we must have
+|F (x1,..., x n)−xS1|2≤κ 1
+n−f
+∑
+i∈S1
+|xi−xS1|2.
+Therefore, 0 =xS0 =F (x1,...,x n) =xS1 = 1, which is a contradiction.
+As a result, we must haven> 2f. This implies thatxS1 = f
+n−f . Thus,
+|F (x1,..., x n)−xS1|2 =
+( f
+n−f
+)2
+. (14)
+SinceF is (f,κ )-resilient averaging rule, we have
+|F (x1,..., x n)−xS1|2≤κ 1
+n−f
+∑
+i∈S1
+|xi−xS1|2 = κ
+n−f
+(
+(n− 2f)
+⏐⏐⏐⏐0− f
+n−f
+⏐⏐⏐⏐
+2
++f
+⏐⏐⏐⏐1− f
+n−f
+⏐⏐⏐⏐
+2)
+= κ
+n−f
+(
+(n− 2f) f 2
+(n−f)2 +f (n− 2f)2
+(n−f)2
+)
+= κf (n− 2f)
+n−f
+(f +n− 2f
+(n−f)2
+)
+=κf(n− 2f)
+(n−f)2 .
+Plugging this inequality back in (14), we concludeκ≥ f
+n−2f .
+Proposition 7. Letn∈ N∗,f ≥ 1 such thatn> 2f, andκ≥ 0. For anyF∈{ GM, CWMed, Krum}, ifF is (f,κ )-robust
+thenκ∈ Ω(1).
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Proof. Letn∈ N∗,f ≥ 1 such that n > 2f andκ≥ 0. Let F ∈{ GM, CWMed, Krum}. We will prove that if F is
+(f,κ )-robust, then there exists an absolute constantc> 0 such thatκ≥c.
+Consider x1,...,x n ∈ R such that x1,...,x ⌊n−f
+2 ⌋ = −1 and x⌊n−f
+2 ⌋+1,...,x n−f = 1 . Moreover, we set
+xn−f +1,...,x n = 1 . Observe that, because f ≥ 1, there is a strict majority of the inputs taking value 1: the num-
+ber of such inputs is
+(
+n−f−
+⌊
+n−f
+2
+⌋)
++f =
+⌈
+n−f
+2
+⌉
++f≥
+⌊
+n−f
+2
+⌋
++f >
+⌊
+n−f
+2
+⌋
+.
+Besides, recall that by settingS ={1,...,n −f}, any (f,κ )-robust functionF should verify
+|F (x1,..., x n)−xS|2≤κ 1
+n−f
+∑
+i∈S
+|xi−xS|2. (15)
+However, the averagexS is equal to
+xS = 1
+n−f
+∑
+i∈S
+xi = 1
+n−f
+[⌊n−f
+2
+⌋
+× (−1) +
+(
+n−f−
+⌊n−f
+2
+⌋)
+× (+1)
+]
+= 1
+n−f
+(
+n−f− 2
+⌊n−f
+2
+⌋)
+=
+{
+0 ifn−f is even,
+1
+n−f ifn−f is odd. (16)
+Besides, the empirical average 1
+n−f
+∑
+i∈S|xi−xS|2 is equal to
+1
+n−f
+∑
+i∈S
+|xi−xS|2 = 1
+n−f
+∑
+i∈S
+(
+x2
+i +x2
+S− 2xixS
+)
+= 1
+n−f
+∑
+i∈S
+x2
+i−x2
+S
+= 1−x2
+S =
+
+
+
+1 ifn−f is even,
+1−
+(
+1
+n−f
+)2
+ifn−f is odd.
+(17)
+Now, observe that the value ofF (x1,...,x n) is equal to 1 for everyF∈{ GM, CWMed, Krum}. Indeed, sincef≥ 1, a
+strict majority of the inputs take the value 1, while the remaining inputs take the value−1. Recall also that GM is identical
+to CWMed in one dimension.
+By plugging this in (15), using (16) and (17), and rearranging terms, we obtain for everyF∈{ GM, CWMed, Krum}
+κ≥|F (x1,..., x n)−xS|2
+1
+n−f
+∑
+i∈S|xi−xS|2 = |1−xS|2
+1
+n−f
+∑
+i∈S|xi−xS|2 =
+
+
+
+1 ifn−f is even,
+|1− 1
+n−f|
+2
+1−( 1
+n−f )
+2 ifn−f is odd. (18)
+Note however that |1− 1
+n−f|
+2
+1−( 1
+n−f )
+2 =
+1− 1
+n−f
+1+ 1
+n−f
+= n−f−1
+n−f +1 = 1 − 2
+n−f +1. Since f ≥ 1, then n≥ 2f + 1 ≥ 3, and thus
+|1− 1
+n−f|
+2
+1−( 1
+n−f )
+2 = 1− 2
+n−f +1≥ 1
+3. Therefore, in both cases of (18), we haveκ≥ 1
+3 for everyF∈{ GM, CWMed, Krum}. This
+concludes the proof.
+We can now see that the robustness coefﬁcients given in Table 1 are tight in order of magnitude. Assume thatn≥ (2 +ν)f
+for some absolute constantν >0. The coefﬁcient of CWTM is of orderO
+(
+f
+n−2f
+)
+, which is optimal following Proposition 6.
+The coefﬁcients of CWMed, GM and Krum are of orderO(1), which is optimal following Proposition 7.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+8.3 Unifying Robustness Deﬁnitions
+In this section, we prove that (f,κ )-robustness uniﬁes existing robustness deﬁnitions in the literature [17, 26]. Speciﬁcally,
+we prove that verifying our deﬁnition implies verifying the other deﬁnitions. The reason behind this is that, in (f,κ )-
+robustness, we control the error on estimating the average with a smaller quantity compared to existing works.
+8.3.1 (f,λ )-resilient Averaging
+Recall the deﬁnition of (f,λ )-resilient averaging [17] below.
+Deﬁnition 3 ((f, λ)-Resilient averaging). Forf <n and real valueλ≥ 0, an aggregation ruleF is called (f, λ)-resilient
+averaging if for any collection ofn vectorsx1,..., x n, and any setS⊆{ 1,..., n} of sizen−f,
+∥F (x1,..., x n)−xS∥≤ λ max
+i,j∈S
+∥xi−xj∥,
+wherexS := 1
+|S|
+∑
+i∈Sxi, and|S| is the cardinality ofS.
+The following proposition shows that (f,κ )-robustness implies (f,λ )-resilient averaging.
+Proposition 8. Letn∈ N∗,f <n andκ> 0. IfF is (f,κ )-robust, thenF is (f,λ )-resilient withλ =
+√
+κ/2.
+Proof. Letn∈ N∗,f <n andλ,κ> 0. Letx1,...,x n∈ Rd andS⊆{ 1,...,n } such that|S| =n−f.
+IfF is (f,κ )-robust, then we have
+∥F (x1,...,x n)−xS∥2≤κ 1
+n−f
+∑
+i∈S
+∥xi−xS∥2 =κ 1
+2(n−f)2
+∑
+i,j∈S
+∥xi−xj∥2≤ κ
+2 max
+i,j∈S
+∥xi−xj∥2. (19)
+The equality above is due to
+1
+2(n−f)2
+∑
+i,j∈S
+∥xi−xj∥2 = 1
+2(n−f)2
+∑
+i,j∈S
+∥xi−xS +xS−xj∥2
+= 1
+2(n−f)2
+∑
+i,j∈S
+(
+∥xi−xS∥2 +∥xS−xj∥2− 2(xi−xS)(xj−xS)
+)
+= 1
+2(n−f)2
+
+(n−f)
+∑
+i∈S
+∥xi−xS∥2 + (n−f)
+∑
+j∈S
+∥xS−xj∥2
+
+
+− 1
+(n−f)2
+∑
+i,j∈S
+(xi−xS)(xj−xS)
+= 1
+n−f
+∑
+i∈S
+∥xi−xS∥2− 1
+(n−f)2
+∑
+i∈S
+(xi−xS)
+∑
+j∈S
+(xj−xS)
+  
+=0
+= 1
+n−f
+∑
+i∈S
+∥xi−xS∥2. (20)
+Taking the square root of both sides in (19) concludes the proof.
+As a consequence of Proposition 8, one can measure the signiﬁcant improvement over the analysis of aggregation rules in [17].
+For example, the coefﬁcientλ proved for CWMed in [17] is n
+2(n−f ) min{2√n−f,
+√
+d}, which is either growing with the
+dimension orn. In contrast, Proposition 8 shows that our analysis implies the coefﬁcientλ =
+√
+κ/2 =
+√
+2
+(
+1 + f
+n−2f
+)
+,
+which is bounded whenevern≥ (2 +ν)f for someν >0. A similar observation can be made for CWTM.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+8.3.2 (δmax,c )-agnostic Robust Aggregation
+We recall the deﬁnition of an agnostic robust aggregator (ARAgg) [26] below. Note that the so-called ”good” subset in the
+original deﬁnition of (δmax,c )-ARAgg [26] is only required to be of size|S|≥ (1−δ)n, whereδ is an upper bound on the
+fraction of Byzantine workers. In our formalism,f is the actual number of Byzantine workers, and thus we directly require
+|S| =n−f without loss of generality.
+Deﬁnition 4 ((δmax,c )-ARAgg). Given inputsX1,...,X n such that a subsetS,|S| =n−f with f
+n≤δmax < 0.5 satisﬁes
+E
+[
+∥Xi−Xj∥2
+]
+≤ρ2 for alli,j ∈S. Then, the output ˆX of a (δmax,c )-ARAgg satisﬁes E
+[ ˆX−XS
+
+2]
+≤c f
+nρ2.
+The following proposition shows that (f,κ )-robustness implies (δmax,c )-agnostic robust aggregation. We also show that to
+obtain (δmax,c )-agnostic robust aggregation withc =O(1), although there is no such theoretical requirement in [26], it is
+sufﬁcient to haveκ∈O
+(
+f
+n−2f
+)
+.
+Proposition 9. Letn∈ N∗, 0<f < n/2,κ> 0, and f
+n≤δmax < 1
+2. IfF is (f,κ )-robust, thenF is (δmax,c )-ARAgg with
+c =κ n
+2f . Furthermore, ifκ∈O
+(
+f
+n−2f
+)
+thenc =O(1).
+Proof. Letn∈ N∗, 0<f < n/2,κ> 0, and 0<δ max < 1
+2. Assume thatF is (f,κ )-robust. Consider anyx1,...,x n∈ Rd
+andS⊆ [n] such that|S| =n−f.
+AsF is (f,κ )-robust, using (20), we have
+∥F (x1,...,x n)−xS∥2≤ κ
+n−f
+∑
+i∈S
+∥xi−xS∥2 = κ
+2(n−f)2
+∑
+i,j∈S
+∥xi−xj∥2. (21)
+For any random variablesX1,...,X n, integrating over (21) with the joint probability measure of these variables then gives
+E
+[F (X1,...,X n)−XS
+2]
+≤ κ
+2 E
+
+ 1
+(n−f)2
+∑
+i,j∈S
+∥Xi−Xj∥2
+
+ = κ
+2
+1
+|S|2
+∑
+i,j∈S
+E
+[
+∥Xi−Xj∥2
+]
+≤ κ
+2 max
+i,j∈S
+E
+[
+∥Xi−Xj∥2
+]
+=cf
+n max
+i,j∈S
+E
+[
+∥Xi−Xj∥2
+]
+. (22)
+wherec :=κ n
+2f . Thus, ifX1,...,X n are such that there exists a subsetS⊆ [n],|S| =n−f, for which E
+[
+∥Xi−Xj∥2
+]
+≤
+ρ2 for alli,j ∈S. Then, it holds that ρ2≥ maxi,j∈S E
+[
+∥Xi−Xj∥2
+]
+. This fact together with (22) allows to conclude the
+desired result; that is,
+E
+[F (X1,...,X n)−XS
+2]
+≤cf
+nρ2.
+Furthermore, if κ =O
+(
+f
+n−2f
+)
+, then we can write κ≤ 2m(1− 2δmax) f
+n−2f for some absolute constant m >0, since
+δmax∈ (0, 1
+2). However, since f
+n≤δmax andδ↦→ 2δ
+1−2δ is non-decreasing, we have f
+n−2f = f
+n(1+ 2f
+n−2f )≤ f
+n(1+ 2δmax
+1−2δmax
+),
+and thusκ≤ 2m(1− 2δmax) f
+n−2f≤ 2m f
+n. As a result, we havec =κ n
+2f≤m =O(1). This concludes the proof.
+Our analysis improves over that of [26] for CWMed and Krum. For CWMed, their rate is dimension-dependent unlike ours.
+For Krum, they only prove robustness assumingn> 4f, while our analysis holds forn> 2f.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+9 Proof of Lemma 1: Analysis of NNM
+9.1 Proof Overview
+The proof of Lemma 1 relies on the observation that NNM brings the inputs closer to the true average. This is formalized in
+Lemma 5 where we show that the empirical variance is reduced by a factor of orderf/n. Note that although outputs of NNM
+have smaller variance than the original inputs, their average may deviate from the original average. Then, in the proof of
+Lemma 1, we control this bias introduced by the NNM operation, and use the reduction proved in Lemma 5 to conclude.
+Notation. In the following, for every set S⊆ [n], and every vectors x1,...,x n∈ Rd, we denote by xS the average
+1
+|S|
+∑
+i∈Sxi. Letµ∈ Rd. We denote byyµ the average of then−f nearest neighbors ofµ in{x1,...,x n}:
+yµ := 1
+|Nµ|
+∑
+i∈Nµ
+xi,
+whereNµ⊆{ 1,..., n},|Nµ| =n−f, is the set of indices of then−f nearest neighbors ofµ.
+9.2 Proof of Supporting Lemmas
+We ﬁrst prove a general lemma allowing us to control the distance between the nearest neighbor averageyµ and the true
+averagexS with the dispersion of (xi)i∈S around the pivotµ.
+Lemma 4. Let n∈ N∗, f < n, and µ∈ Rd. For any set S ⊆{ 1,...,n },|S| = n−f, we have for any vectors
+x1,...,x n∈ Rd,
+∥yµ−xS∥2≤ 4f
+n−f
+1
+|S|
+∑
+i∈S
+∥xi−µ∥2.
+Proof. Letn∈ N∗,f < n,µ∈ Rd,x1,...,x n∈ Rd, andS⊆{ 1,...,n },|S| =n−f. Recall that, by deﬁnition, we
+haveyµ = 1
+n−f
+∑
+i∈Nµxi, whereNµ⊆{ 1,..., n},|Nµ| =n−f, is the set of indices of then−f nearest neighbors of
+µ. We then have
+∥yµ−xS∥2 =
+
+1
+n−f
+∑
+i∈Nµ
+xi− 1
+n−f
+∑
+i∈S
+xi
+
+2
+= 1
+(n−f)2
+
+∑
+i∈Nµ
+xi−
+∑
+i∈S
+xi
+
+2
+= 1
+(n−f)2
+
+∑
+i∈Nµ\S
+xi−
+∑
+i∈S\Nµ
+xi
+
+2
+.
+Observe that, since|S| =|Nµ| =n−f, we have|S\Nµ| =|Nµ\S| =|S∪Nµ|−| S|≤ n− (n−f)≤f. As a result,
+by applying Jensen’s inequality, we have
+∥yµ−xS∥2 = 1
+(n−f)2
+
+∑
+i∈Nµ\S
+xi−
+∑
+i∈S\Nµ
+xi
+
+2
+= 1
+(n−f)2
+
+∑
+i∈Nµ\S
+(xi−µ)−
+∑
+i∈S\Nµ
+(xi−µ)
+
+2
+≤|S\Nµ| +|Nµ\S|
+(n−f)2
+
+ ∑
+i∈Nµ\S
+∥xi−µ∥2 +
+∑
+i∈S\Nµ
+∥xi−µ∥2
+
+
+≤ 2f
+(n−f)2
+
+ ∑
+i∈Nµ\S
+∥xi−µ∥2 +
+∑
+i∈S\Nµ
+∥xi−µ∥2
+
+.
+On one hand, sinceNµ is the set ofn−f nearest neighbors toµ, the ﬁrst term can be bounded by
+∑
+i∈Nµ\S
+∥xi−µ∥2≤
+∑
+i∈Nµ
+∥xi−µ∥2≤
+∑
+i∈S
+∥xi−µ∥2.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+On the other hand, the second term can be bounded by
+∑
+i∈S\Nµ
+∥xi−µ∥2≤
+∑
+i∈S
+∥xi−µ∥2.
+We ﬁnally conclude that
+∥yµ−xS∥2≤ 4f
+(n−f)2
+∑
+i∈S
+∥xi−µ∥2.
+The second lemma crucially shows that the sum of the bias and the variance is reduced by a factor 8f
+n−f . To do so, we
+specialize the ﬁrst lemma by setting the pivot to be the elementxi,i∈S.
+Lemma 5. Letn∈ N∗,f <n . For any setS⊆{ 1,...,n },|S| =n−f, for any vectorsx1,...,x n∈ Rd, the vectors
+(y1,...,y n) = NNM(x1,...,x n) verify
+1
+|S|
+∑
+i∈S
+∥yi−yS∥2
+  
+variance
++∥yS−xS∥2
+  
+bias
+≤ 8f
+n−f
+1
+|S|
+∑
+i∈S
+∥xi−xS∥2.
+Proof. Letn∈ N∗,f <n,x1,...,x n∈ Rd, andS⊆{ 1,...,n },|S| =n−f. We ﬁrst prove the following bias-variance
+decomposition
+1
+|S|
+∑
+i∈S
+∥yi−yS∥2 +∥yS−xS∥2 = 1
+|S|
+∑
+i∈S
+∥yi−xS∥. (23)
+We develop the ﬁrst term of the l.h.s. of the equality above and obtain
+1
+n−f
+∑
+i∈S
+∥yi−yS∥2 = 1
+n−f
+∑
+i∈S
+∥yi−xS +xS−yS∥2
+= 1
+n−f
+∑
+i∈S
+∥yi−xS∥2 +∥xS−yS∥2 + 2 1
+n−f
+∑
+i∈S
+⟨yi−xS, xS−yS⟩.
+However, we have
+1
+n−f
+∑
+i∈S
+⟨yi−xS, xS−yS⟩ =
+⟨
+1
+n−f
+∑
+i∈S
+yi
+  
+=yS
+−xS, xS−yS
+⟩
+=−∥xS−yS∥2.
+As a result, we then have
+1
+n−f
+∑
+i∈S
+∥yi−yS∥2 = 1
+n−f
+∑
+i∈S
+∥yi−xS∥2 +∥xS−yS∥2− 2∥xS−yS∥2
+= 1
+n−f
+∑
+i∈S
+∥yi−xS∥2−∥xS−yS∥2.
+This proves (23). Besides, for anyi∈S, we know from Lemma 4, withµ =xi, that
+∥yi−xS∥2≤ 4f
+n−f
+1
+n−f
+∑
+j∈S
+∥xj−xi∥2.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+As a consequence, using (23), we have
+1
+|S|
+∑
+i∈S
+∥yi−yS∥2 +∥yS−xS∥2 = 1
+n−f
+∑
+i∈S
+∥yi−xS∥2≤ 4f
+n−f
+1
+(n−f)2
+∑
+i,j∈S
+∥xj−xi∥2
+= 4f
+n−f
+1
+(n−f)2
+∑
+i,j∈S
+∥xj−xS− (xi−xS)∥2
+= 4f
+n−f
+1
+(n−f)2
+∑
+i,j∈S
+(
+∥xj−xS∥2 +∥xi−xS∥2− 2⟨xj−xS, xi−xS⟩
+)
+= 4f
+n−f
+1
+(n−f)2
+[ ∑
+i,j∈S
+∥xj−xS∥2 +
+∑
+i,j∈S
+∥xi−xS∥2− 2
+∑
+i,j∈S
+⟨xj−xS, xi−xS⟩
+]
+= 4f
+n−f
+1
+(n−f)2
+[
+2(n−f)
+∑
+i∈S
+∥xi−xS∥2− 2
+∑
+i,j∈S
+⟨xj−xS, xi−xS⟩
+]
+= 4f
+n−f
+1
+(n−f)2
+[
+2(n−f)
+∑
+i∈S
+∥xi−xS∥2− 2
+∑
+i∈S
+⟨∑
+j∈S
+(xj−xS)
+  
+=0
+, xi−xS
+⟩]
+= 8f
+n−f
+1
+n−f
+∑
+i∈S
+∥xi−xS∥2.
+This concludes the proof.
+9.3 Proof of Lemma 1
+We can now prove Lemma 1, mainly thanks to the bias-variance trade-off guaranteed by Lemma 5.
+Lemma 1. Letf <n/2 andF : Rd×n→ Rd. IfF is (f,κ )-robust, thenF◦ NNM is (f,κ′)-robust withκ′≤ 8f
+n−f (κ + 1).
+Proof. Letn∈ N∗,f < n,x1,...,x n∈ Rd,S⊆{ 1,...,n },|S| = n−f. Assume F is (f,κ )-robust. First, denote
+(y1,...,y n) :=F◦ NNM(x1,...,x n) andyS := 1
+n−f
+∑
+i∈Syi. SinceF is (f,κ )-robust, the vectorsy1,...,y n satisfy
+∥F◦ NNM(x1,...,x n)−yS∥2 =∥F (y1,...,y n)−yS∥2≤κ 1
+|S|
+∑
+i∈S
+∥yi−yS∥2. (24)
+Now, thanks to Young’s inequality we have forc = 1/κ, (a +b)2≤ (1 +c)a2 + (1 + 1/c)b2. We can then write using (24)
+∥F◦ NNM(x1,...,x n)−xS∥2 =∥F◦ NNM(x1,...,x n)−yS +yS−xS∥2
+≤ (1 + 1
+κ)∥F◦ NNM(x1,...,x n)−yS∥2 + (1 +κ)∥yS−xS∥2
+≤ (1 + 1
+κ)κ 1
+|S|
+∑
+i∈S
+∥yi−yS∥2 + (1 +κ)∥yS−xS∥2
+= 1 +κ
+n−f
+∑
+i∈S
+∥yi−yS∥2 + (1 +κ)∥yS−xS∥2. (25)
+Recall that Lemma 5 shows that 1
+|S|
+∑
+i∈S∥yi−yS∥2 +∥yS−xS∥2≤ 8f
+n−f
+1
+|S|
+∑
+i∈S∥xi−xS∥2. Plugging this in (25)
+allows to conclude
+∥F◦ NNM(x1,...,x n)−xS∥2≤ 8f
+n−f
+1 +κ
+n−f
+∑
+i∈S
+∥xi−xS∥2.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+10 Analysis of Bucketing
+In this section, we compare the robustness guarantees of the Bucketing algorithm [ 26] with NNM. Bucketing is a pre-
+aggregation step that maps input vectors{x1,...,x n} to output vectors{y1,...,y ⌈n/s⌉}, wheres is a parameter called the
+bucket size. The Bucketing algorithm works as follows. First, it samples a random permutation π : [n]→ [n]. Then, for
+eachi∈{ 1,..., ⌈n/s⌉}, it computes the output of bucketi as7
+yi := 1
+s
+min(s·i,n)∑
+k=s(i−1)+1
+xπ(k).
+Recall that the property that enables NNM to boost the robustness of aggregations is that the heterogeneity of the output
+vectors 1
+|S|
+∑
+i∈S∥yi−xS∥2 is a factorO(f/n) smaller than the heterogeneity of the input vectors 1
+|S|
+∑
+i∈S∥xi−xS∥2
+(see Lemma 5). But, unlike NNM, Bucketing only reduces the heterogeneity in expectation over the random permutations
+(see Lemma 1 in [26]). Thus, there are iterations of the learning algorithm where Bucketing may not reduce the heterogeneity,
+and these iterations are the best opportunity for the Byzantine workers to cause the most damage to the learning.
+We give in Observation 1 below a simple example showing that deterministically reducing the heterogeneity of inputs is
+impossible using Bucketing in general, even in the absence of malicious inputs.
+Observation 1. Using Bucketing, it is impossible to provide a worst-case heterogeneity reduction guarantee regardless of
+the value ofs, even in the absence of Byzantine inputs.
+Proof. Letπ be any permutation over [n]. We will construct an instance ofn inputs such that an execution of Bucketing
+using permutationπ does not reduce the heterogeneity. Consider the inputs (x1,...,x n) such that for all 1≤i≤⌈ n/s⌉ and
+allk,l∈{s(i− 1) + 1,...,s ·i}, it holds thatxπ(k) =xπ(l) =:yi. Thus, applying the permutationπ on these inputs yields
+( s times  y1,...,y 1,...,
+s times  yn/s,...,y n/s
+)
+in which each vectoryi is repeateds times. Overall, the execution of Bucketing withπ
+will produce (y1,...,y n/s), which has the same variance as the original inputs, and thus heterogeneity was not reduced.
+Moreover, given that the buckets are randomly chosen, the (expected) reduction of heterogeneity is only achieved at the
+expense of an increase in the fraction of Byzantine inputs:
+Observation 2. Bucketing increases the fraction of Byzantine workers by a factors in the worst case.
+Proof. In some executions, Bucketing might assign every Byzantine input to a different bucket. In this case, since the
+average within each “contaminated” bucket is arbitrarily manipulable by a single Byzantine input, the number of Byzantine
+output vectors is the same as the number of Byzantine input vectors. However, the total number of output vectors iss times
+smaller than the total number of input vectors, thereby effectively increasing the fraction of Byzantine workers.
+This observation implies that in order to have a worst-case robustness guarantee, the bucket sizes can be at most
+⌊
+n
+2f
+⌋
+, as
+done in [26]. This instability in reducing the heterogeneity results in a poor estimation of the mean in some iterations. We
+observe this instability in practice as we show below on experiments on CIFAR-10.
+Experimental validation. Recall robust D-SHB (Algorithm 3), and the corresponding notations. In Figure 2, we plot in
+each stept∈ [T ] the quantity ˆκt deﬁned as follows
+ˆκ2
+t :=∥Rt−mt∥2/ 1
+|H|
+∑
+i∈H
+m(i)
+t −mt
+
+2
+, (26)
+wheremt := 1
+|H|
+∑
+i∈Hm(i)
+t is the average of honest momentums at stept. In words, Figure 2 shows the error in estimating
+the true average, scaled by the standard deviation of the honest inputs, across different steps of the learning. The quantity in
+Equation (26) is an empirical estimation ofκ, a parameter of the deﬁnition of (f,κ )-robustness in our theory. The ﬁgure
+validates our insights about Bucketing and shows the superiority of NNM both in terms of stability of the error curves, as
+well as the quality of the average estimation. Indeed, the NNM curves are consistently below Bucketing’s.
+7In the theoretical analysis, for simplicity, we assume thatn is divisible bys. If this is not the case, some buckets will include less than
+s vectors which is less favorable for the theoretical guarantees of Bucketing but does not change the asymptotic behavior.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 500 1000 1500 2000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00Kappa
+NNM + GM
+NNM + CWMed
+ Bucketing + GM
+ Bucketing + CWMed
+0 500 1000 1500 2000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00Kappa
+NNM + GM
+NNM + CWMed
+ Bucketing + GM
+ Bucketing + CWMed
+Figure 2: Plot of ˆκt (deﬁned in (26)) on CIFAR-10 withf = 2 Byzantine workers amongn = 17 executing the ALIE
+(column 1) and FOE (column 2) attacks. The heterogeneity level isα = 1. The corresponding accuracies are in Figure 24.
+11 Proof of Theorem 1: Analysis of Robust D-GD
+Theorem 1. Let Assumption 1 hold and recall thatLH isL-smooth. Consider Algorithm 1 with learning rateγ = 1
+L. IfF
+is (f,κ )-robust, then for allT≥ 1
+∇LH(ˆθ)
+
+2
+≤ 4κG2 + 4L(LH(θ0)−L∗)
+T .
+Proof. Let Assumption 1 hold. AssumeLH to beL-smooth andF to be (f,κ )-robust. Consider Algorithm 1 with learning
+rateγ = 1
+L. The update step corresponds toθt =θt−1− 1
+LRt for everyt≥ 1.
+SinceLH isL-smooth, we have (see [8]) for allt≥ 1,
+LH(θt)−LH(θt−1)≤⟨∇LH(θt−1), θt−θt−1⟩ + L
+2∥θt−θt−1∥2 =−γ⟨∇LH(θt−1), Rt⟩ + 1
+2γ2L∥Rt∥2
+=− 1
+L⟨∇LH(θt−1), Rt⟩ + 1
+2L∥Rt∥2. (27)
+We expand the second term as follows
+∥Rt∥2 =∥Rt−∇LH(θt−1) +∇LH(θt−1)∥2
+=∥Rt−∇LH(θt−1)∥2 +∥∇LH(θt−1)∥2 + 2⟨∇LH(θt−1), Rt−∇LH(θt−1)⟩.
+Plugging this back in (27), then simplifying, yields
+LH(θt)−LH(θt−1)≤− 1
+L⟨∇LH(θt−1), Rt⟩ + 1
+2L∥Rt−∇LH(θt−1)∥2 + 1
+2L∥∇LH(θt−1)∥2
++ 1
+L⟨∇LH(θt−1), Rt−∇LH(θt−1)⟩
+= 1
+2L∥Rt−∇LH(θt−1)∥2− 1
+2L∥∇LH(θt−1)∥2.
+Upon rearranging terms and multiplying both sides by 2L we get
+∥∇LH(θt−1)∥2≤∥Rt−∇LH(θt−1)∥2 + 2L(LH(θt−1)−LH(θt)).
+By the (f,κ )-robustness property ofF and Assumption 1, we can bound the ﬁrst term as follows
+∥Rt−∇LH(θt−1)∥2 =
+F
+(
+g(1)
+t ,...,g (n)
+t
+)
+− 1
+|H|
+∑
+i∈H
+g(i)
+t
+
+2
+≤ κ
+|H|
+∑
+i∈H
+g(i)
+t − 1
+|H|
+∑
+i∈H
+g(i)
+t
+
+2
+= κ
+|H|
+∑
+i∈H
+∥∇Li(θt−1)−∇LH(θt−1)∥2≤κG2. (28)
+As a result, we have
+∥∇LH(θt−1)∥2≤κG2 + 2L (LH(θt−1)−LH(θt)).
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+By taking the average overt from 1 toT , and sinceLH(θT )≥ infθ∈RdLH(θ) =L∗, we have
+1
+T
+T−1∑
+t=0
+∥∇LH(θt)∥2≤κG2 + 2L (LH(θ0)−LH(θT ))
+T ≤κG2 + 2L (LH(θ0)−L∗)
+T . (29)
+Final step. Recall from Algorithm 1 that ˆθ =θτ−1 withτ∈ arg min1≤t≤T∥Rt∥. Thus, using Jensen’s inequality, (28)
+and then (29), we have
+∇LH(ˆθ)
+
+2
+= min
+1≤t≤T
+∥Rt∥2 = min
+1≤t≤T
+∥∇LH(θt−1) + (Rt−∇LH(θt−1))∥2
+≤ min
+1≤t≤T
+{
+2∥∇LH(θt−1)∥2 + 2∥Rt−∇LH(θt−1)∥2
+}
+≤ 2 min
+1≤t≤T
+∥∇LH(θt−1)∥2 + 2κG2
+≤ 2 1
+T
+T−1∑
+t=0
+∥∇LH (θt)∥2 + 2κG2≤ 2κG2 + 4L(LH(θ0)−L∗)
+T + 2κG2
+= 4κG2 + 4L(LH(θ0)−L∗)
+T .
+This concludes the proof.
+12 Proof of Corollary 1: Analysis of Robust D-GD with NNM
+Corollary 1. Let Assumption 1 hold and recall thatLH isL-smooth. Consider Algorithm 1 withγ = 1/L and aggregation
+F◦ NNM. IfF is (f,κ )-robust withκ =O(1), then Algorithm 1 is (f,ε )-Byzantine resilient with
+ε =O
+(
+f/nG2 + 1/T
+)
+.
+Proof. Let Assumption 1 hold. AssumeLH to beL-smooth andF to be (f,κ )-robust. First recall that, by Lemma 1, the
+compositionF◦ NNM is (f,κ′)-robust withκ′ = 8f
+n−f (κ + 1).
+Consider Algorithm 1 with learning rateγ = 1/L and aggregation ruleF◦ NNM. Following Theorem 1, we have for every
+T≥ 1, ∇LH
+(
+ˆθ
+)
+2
+≤ 4κ′G2 + 4L(LH(θ0)−L∗)
+T = 32f
+n−f (κ + 1)G2 + 4L(LH(θ0)−L∗)
+T .
+Recall that, asf <n/2, we have f
+n−f≤ 2f
+n . Thus, ifκ =O(1), we can write
+∇LH
+(
+ˆθ
+)
+2
+=O
+(
+f/nG2 + 1/T
+)
+.
+This concludes the proof.
+We provide the proof of the lower bound on Byzantine resilience under heterogeneity (Proposition 1) below.
+Proposition 1. If a learning algorithm A is (f,ε )-Byzantine resilient for every collection of smooth loss functions
+L1,..., Ln satisfying Assumption 1, thenε = Ω
+(
+f/nG2)
+.
+Proof. The proof is similar to that of Theorem III [ 26]. Assume learning algorithm A is (f,ε )-Byzantine resilient for
+every collection of smooth loss functions L1,..., Ln satisfying Assumption 1. Consider the following quadratic loss
+functionsL1 = ... =Ln−f = θ↦→ 1
+2∥θ∥2 andLn−f +1 = ... =Ln = θ↦→ 1
+2∥θ−z∥2, where z∈ Rd is such that
+∥z∥2 = (n−f )2
+f (n−2f )G2. Consider the two situationsH1 ={1,...,n −f} andH2 ={f + 1,...,n }.
+We ﬁrst show that the loss functions satisfy Assumption 1 in both situations. This is straightforward in situationH1 since
+honest losses are identical. In situationH2, we have for allθ∈ Rd,
+∇LH2(θ) = 1
+n−f
+∑
+i∈H2
+∇Li(θ) = n− 2f
+n−f θ + f
+n−f (θ−z) =θ− f
+n−fz.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Therefore, thanks to the choice ofz, we now show that Assumption 1 holds, as for allθ∈ Rd we have
+1
+|H2|
+∑
+i∈H2
+∥∇Li(θ)−∇LH2(θ)∥2 = n− 2f
+n−f
+
+f
+n−fz
+
+2
++ f
+n−f
+
+n− 2f
+n−f z
+
+2
+= f(n− 2f)
+(n−f)2 ∥z∥2 =G2.
+Now, since learning algorithmA is (f,ε )-Byzantine resilient, it outputs ˆθ such that
+∇LH1(ˆθ)
+
+2
+≤ε and
+∇LH2(ˆθ)
+
+2
+≤ε.
+Note that situationsH1 andH2 are indistinguishable to algorithmA because it ignores the Byzantine identities, and thus ˆθ
+is the same in both situations. Therefore, invoking Jensen’s inequality, we have
+ε≥ max
+{∇LH1(ˆθ)
+
+2
+,
+∇LH2(ˆθ)
+
+2}
+≥ 1
+2
+(∇LH1(ˆθ)
+
+2
++
+∇LH2(ˆθ)
+
+2)
+= 1
+2
+(ˆθ
+
+2
++
+ˆθ− f
+n−fz
+
+2)
+≥ 1
+4
+
+f
+n−fz
+
+2
+= 1
+4
+( f
+n−f
+)2 (n−f)2
+f(n− 2f)G2 = 1
+4
+f
+n− 2fG2.
+Sincen− 2f≤n, we obtainε≥ 1
+4f/nG2, which concludes the proof.
+13 Proof of Theorem 2: Analysis of Robust D-SHB
+13.1 Proof Outline
+Our analysis of robust D-SHB (Algorithm 3) follows [17] and consists of four elements: (i) Momentum drift (Lemma 6), (ii)
+Aggregation error(Lemma 7), (iii) Momentum deviation (Lemma 8), and (iv) Descent bound (Lemma 9). We combine these
+elements to obtain the ﬁnal convergence result stated in Theorem 2. The originality of our analysis, compared to [17], is
+(i) the tighter analysis of the aggregation error thanks to (f,κ )-robustness, and (ii) the extension of the momentum drift
+analysis to the heterogeneous setting. There are other subtle differences, such as the choice of the learning rate.
+Notation. Recall that for each stept, for each honest workerwi,
+m(i)
+t =βm(i)
+t−1 + (1−β)g(i)
+t (30)
+wherem(i)
+0 = 0 by convention. As we analyze Algorithm 3 with aggregationF , we denote
+Rt :=F
+(
+m(1)
+t ,...,m (n)
+t
+)
+, (31)
+and
+θt =θt−1−γRt. (32)
+We denote byPt the history from steps 1 tot. Speciﬁcally,
+Pt :=
+{
+θ0,..., θ t−1; m(i)
+1 ,..., m (i)
+t−1;i = 1,..., n
+}
+.
+By convention,P1 ={θ0}. We denote by Et [·] and E [·] the conditional expectation E [· Pt] and the total expectation,
+respectively. Thus, E [·] = E1 [··· ET [·]].
+13.1.1 Momentum Drift
+Along the trajectoryθ0,...,θ t−1, the honest workers’ local momentums may drift away from each other. This is in part due
+to the heterogeneity between the training sets. This induces a dissimilarity between honest workers’ local gradients that we
+can control thanks to Assumption 1. The drift is also due to the stochasticity of the local gradients.
+We show in Lemma 6 below that the bound on the drift between the honest workers’ momentums can be controlled by
+tuning the momentum coefﬁcientβ. In fact, the smaller (1−β) the smaller the bound on the drift. Recall that we denote by
+H⊆ [n] the set ofn−f honest workers. We deﬁne
+mt := 1/(n−f )
+∑
+i∈H
+m(i)
+t , (33)
+the average of honest workers’ local momentums. We obtain the following bound on the momentum drift, i.e., Lemma 6,
+proof of which can be found in Appendix 13.4.1.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Lemma 6. Suppose that assumptions 1 and 2 hold true. Consider Algorithm 3. For each t∈ [T ], we obtain that
+E
+[
+1
+|H|
+∑
+i∈H
+m(i)
+t −mt
+
+2
+]
+≤ 3
+(1−β
+1 +β
+)(
+1 + 1
+n−f
+)
+σ2 + 3G2.
+13.1.2 Aggregation Error
+By building upon this ﬁrst lemma and the (f,κ )-robustness property, we can obtain a bound on the error between the
+aggregateRt andmt the average momentum of honest workers for the case. Speciﬁcally, when deﬁning the error
+ξt :=Rt−mt, (34)
+we get the following bound on the error in Lemma 7, proof of which can be found in Appendix 13.4.2.
+Lemma 7. Suppose that assumptions 1 and 2 hold true. Assume F is (f,κ )-robust. Consider Algorithm 3 with aggregation
+F . For each stept∈ [T ], we obtain that
+E
+[
+∥ξt∥2
+]
+≤ 6κ1−β
+1 +βσ2 + 3κG2.
+13.1.3 Momentum Deviation
+Next, we study the momentum deviation; i.e., the distance between the average honest momentummt and the true gradient
+∇LH(θt−1) in an arbitrary stept. Speciﬁcally, we deﬁne deviation to be
+δt :=mt−∇LH
+(
+θt−1
+)
+, (35)
+and obtain in Lemma 8 below an upper bound on the growth of the deviation over the learning steps t∈ [T ]. (Proof of
+Lemma 8 can be found in Appendix 13.4.3.)
+Lemma 8. Suppose that Assumption 2 holds. Recall thatLH isL-smooth. Consider Algorithm 3 with T >1. For allt≥ 2
+we obtain that
+E
+[
+∥δt∥2
+]
+≤β2c E
+[
+∥δt−1∥2
+]
++ 4γL(1 +γL)β2 E
+[∇LH(θt−2)
+2]
++ (1−β)2 σ2
+(n−f)
++ 2γL(1 +γL)β2 E
+[
+∥ξt−1∥2
+]
+,
+wherec := (1 +γL) (1 + 4γL).
+13.1.4 Descent Bound
+Finally, we analyze the fourth element, i.e., the growth of cost functionLH(θ) along the trajectory of Algorithm 3. From (32)
+and (31), we obtain that, for each stept,
+θt =θt−1−γRt =θt−1−γmt−γ (Rt− mt),
+Furthermore, by (34),Rt− mt =ξt. Thus, for allt,
+θt =θt−1−γmt−γξt. (36)
+This means that Algorithm 3 can actually be treated as distributed SGD with a momentum term that is subject to perturbation
+proportional toξt at each stept. This perspective leads us to Lemma 9, proof of which can be found in Appendix 13.4.4.
+Lemma 9. Recall thatLH isL-smooth. Consider Algorithm 3. For allt∈ [T ], we obtain that
+E
+[
+2LH(θt)− 2LH(θt−1)
+]
+≤− γ (1− 4γL) E
+[∇LH(θt−1)
+2]
++ 2γ (1 + 2γL) E
+[
+∥δt∥2
+]
++ 2γ (1 +γL) E
+[
+∥ξt∥2
+]
+.
+Putting all of the previous lemmas together, we prove Theorem 2 in Section 13.2 below. As a corollary of Theorem 2 and
+Lemma 1, we prove Corollary 2 in Section 13.3.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+13.2 Proof of Theorem 2
+We recall the theorem statement below for convenience. Recall that
+L∗ = inf
+θ∈Rd
+LH(θ), a1 = 36,a 2 = 6
+√
+LH(θ0)−L∗,a 3 = 1728L,a 4 = 288L, anda5 = 6La 2
+2. (37)
+Theorem 2. Let assumption 1 and 2 hold and recall that LH isL-smooth. Let F be a (f,κ )-robust aggregation rule.
+Consider Algorithm 3 with momentum coefﬁcientβ =√1− 24γL, and learning rate
+γ = min
+{ 1
+24L, a2
+2aκσ
+√
+T
+}
+,
+witha2
+κ :=a3κ + a4
+n−f . For allT≥ 1
+E
+[∇LH(ˆθ)
+
+2]
+≤a1κG2 + a2aκσ√
+T
++ a5
+T + a2a4σ
+naκT
+3/2
+,
+where the expectation is over the randomness of the algorithm.
+Proof. Deﬁne
+γo := 1
+18L. (38)
+Note that as speciﬁed in the theorem statement, by deﬁnition of γ, we have
+γ≤ 1
+24L≤γo. (39)
+Therefore,β =√1− 24γL (as deﬁned) is a well-deﬁned real value in (0, 1).
+To obtain the convergence result we deﬁne the Lyapunov function to be
+Vt := E
+[
+2LH(θt−1) +z∥δt∥2
+]
+andz = 1
+8L. (40)
+We consider an arbitraryt∈ [T ].
+Invoking Lemma 8. Upon substituting from Lemma 8, we obtain that
+E
+[
+z∥δt+1∥2−z∥δt∥2
+]
+≤zβ 2c E
+[
+∥δt∥2
+]
++ 4zγL(1 +γL)β2 E
+[∇LH(θt−1)
+2]
++z(1−β)2 σ2
+n−f
++ 2zγL(1 +γL)β2 E
+[
+∥ξt∥2
+]
+−z E
+[
+∥δt∥2
+]
+. (41)
+Recall that
+c = (1 +γL) (1 + 4γL) = 1 + 5γL + 4γ2L2. (42)
+Invoking Lemma 9. Substituting from Lemma 9 we obtain that
+E
+[
+2LH(θt)− 2LH(θt−1)
+]
+≤−γ (1− 4γL) E
+[∇LH(θt−1)
+2]
++ 2γ (1 + 2γL) E
+[
+∥δt∥2
+]
++ 2γ (1 +γL) E
+[
+∥ξt∥2
+]
+. (43)
+Substituting from (41) and (43) in (40) we obtain that
+Vt+1−Vt = E
+[
+2LH(θt)− 2LH(θt−1)
+]
++ E
+[
+z∥δt+1∥2−z∥δt∥2
+]
+≤− γ (1− 4γL) E
+[∇LH(θt−1)
+2]
++ 2γ (1 + 2γL) E
+[
+∥δt∥2
+]
++ 2γ (1 +γL) E
+[
+∥ξt∥2
+]
++zβ 2c E
+[
+∥δt∥2
+]
++ 4zγL(1 +γL)β2 E
+[∇LH(θt−1)
+2]
++z(1−β)2 σ2
+n−f
++ 2zγL(1 +γL)β2 E
+[
+∥ξt∥2
+]
+−z E
+[
+∥δt∥2
+]
+. (44)
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Upon re-arranging the R.H.S. in (44) we obtain that
+Vt+1−Vt≤− γ
+(
+(1− 4γL)− 4zL(1 +γL)β2)
+E
+[∇LH(θt−1)
+2]
++z(1−β)2 σ2
+n−f
++
+(
+2γ (1 + 2γL) +zβ 2c−z
+)
+E
+[
+∥δt∥2
+]
++ 2γ
+(
+1 +γL +zL(1 +γL)β2)
+E
+[
+∥ξt∥2
+]
+.
+For simplicity, we deﬁne
+A := (1− 4γL)− 4zL(1 +γL)β2, (45)
+B := 2γ (1 + 2γL) +zβ 2c−z, (46)
+and
+C := 2γ
+(
+1 +γL +zL(1 +γL)β2)
+, (47)
+Thus,
+Vt+1−Vt≤−Aγ E
+[∇LH(θt−1)
+2]
++B E
+[
+∥δt∥2
+]
++C E
+[
+∥ξt∥2
+]
++z(1−β)2 σ2
+n−f. (48)
+We now analyse below the termsA,B andC.
+TermA. Recall from (39) thatγ≤γo = 1
+18L. Upon using this in (45), and the facts thatz = 1
+8L andβ2 < 1, we obtain that
+A≥ 1− 4γoL− 4L
+8L(1 +γoL)≥ 1
+2− 9γoL
+2 ≥ 1
+4. (49)
+TermB. Substitutingc from (42) in (46) we obtain that
+B = 2γ (1 + 2γL) +zβ 2(
+1 + 5γL + 4γ2L2)
+−z
+=−
+(
+1−β2)
+z +γ
+(
+2 + 4γL + 5zβ 2L + 4zβ 2LγL
+)
+.
+Using the facts thatβ2≤ 1 andγ≤γo≤ 1
+18L, and then substitutingz = 1
+8L we obtain that
+B≤−(1−β2)
+8L +γ
+(
+2 + 4
+18 + 5
+8 + 4
+18× 8
+)
+≤−(1−β2)
+8L + 3γ≤−(1−β2) + 24γL
+8L = 0, (50)
+where the last equality follows from the fact that 1−β2 = 24γL.
+TermC. Substitutingz = 1
+8L in (47), and then using the fact thatβ2 < 1, we obtain that
+C = 2γ
+(
+1 +γL + 1
+8(1 +γL)
+)
+≤ 9γ
+4 (1 +γL).
+Asγ≤γo≤ 1
+18L, from above we obtain that
+C≤ 9γ
+4
+(
+1 + 1
+18
+)
+≤ 3γ. (51)
+Combining terms A,B, and C. Finally, substituting from (49), (50), and (51) in (48) (and recalling that z = 1
+8L) we
+obtain that
+Vt+1−Vt≤− γ
+4 E
+[∇LH(θt−1)
+2]
++ 3γ E
+[
+∥ξt∥2
+]
++ (1−β)2 σ2
+8L(n−f).
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+As the above is true for an arbitraryt∈ [T ], by taking summation on both sides fromt = 1 tot =T we obtain that
+VT +1−V1≤− γ
+4
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
++ 3γ
+T∑
+t=1
+E
+[
+∥ξt∥2
+]
++ (1−β)2 σ2
+8L(n−f)T.
+Thus,
+γ
+4
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤V1−VT +1 + 3γ
+T∑
+t=1
+E
+[
+∥ξt∥2
+]
++ (1−β)2 σ2
+8L(n−f)T. (52)
+Note that, asβ >0, and 1−β2 = 24γL, we have
+(1−β)2 =
+(
+1−β2)2
+(1 +β)2 ≤
+(
+1−β2)2
+= 576γ2L2.
+Substituting from above in (52) we obtain that
+γ
+4
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤V1−VT +1 + 3γ
+T∑
+t=1
+E
+[
+∥ξt∥2
+]
++ 576γ2L2σ2
+8L(n−f) T.
+Multiplying both sides by 4/γ we obtain that
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤ 4 (V1−VT +1)
+γ + 12
+T∑
+t=1
+E
+[
+∥ξt∥2
+]
++ 576γLσ 2
+2(n−f) T. (53)
+Invoking Lemma 7. Next, we use Lemma 7 to derive an upper bound on∑T
+t=1 E
+[
+∥ξt∥2
+]
+. Since F is (f,κ )-robust, we
+have from Lemma 7 that for allt∈ [T ],
+E
+[
+∥ξt∥2
+]
+≤ 6κ1−β
+1 +βσ2 + 3κG2.
+By summing overt from 1 toT , we obtain that
+T∑
+t=1
+E
+[
+∥ξt∥2
+]
+≤ 6κ1−β
+1 +βσ2T + 3κG2T. (54)
+Asβ >0, and the fact that 1−β2 = 24γL, we have
+1−β
+1 +β = 1−β2
+(1 +β)2≤ 1−β2 = 24γL.
+Substituting the above in (54), we obtain that
+T∑
+t=1
+E
+[
+∥ξt∥2
+]
+≤ (24× 6)σ2κγLT + 3κG2T = 144σ2κγLT + 3κG2T.
+Substituting from above in (53) we obtain that
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤4 (V1−VT +1)
+γ + (12× 144)σ2κγLT + (12× 3)κG2T + 288γLσ 2
+(n−f) .
+Recall that
+a1 = (12× 3) = 36,a 3 = (12× 144)L = 1728L, anda4 = 288L
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Thus, from above we obtain that
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤ 4 (V1−VT +1)
+γ +a3κσ2γT + a4σ2
+(n−f)γT +a1κG2T.
+Diving both sides byT we obtain that
+1
+T
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤ 4 (V1−VT +1)
+γT +a3κσ2γ + a4σ2
+(n−f)γ +a1κG2. (55)
+AnalyzingVt. Recall thatL∗ = infθ∈RdLH(θ). Note that for an arbitraryt, by deﬁnition ofVt in (40),
+Vt− 2L∗ = 2 E
+[
+LH(θt−1)−L∗]
++z E
+[
+∥δt∥2
+]
+≥ 0 +z E
+[
+∥δt∥2
+]
+≥ 0.
+Thus,
+V1−VT +1 =V1− 2L∗− (VT +1− 2L∗)≤V1− 2L∗. (56)
+Moreover,
+V1 = 2LH(θ0) +z E
+[
+∥δ1∥2
+]
+. (57)
+By deﬁnition ofδt in (35), the deﬁnition ofmt in (33), and the fact thatm(i)
+0 = 0 for alli∈H , we obtain that
+E
+[
+∥δ1∥2
+]
+= E
+[
+∥m1−∇LH(θ0)∥2
+]
+= E
+[
+∥(1−β)g1−∇LH(θ0)∥2
+]
+whereg1, deﬁned in (59), is the average ofn−f honest workers’ stochastic gradients in step1. Expanding the R.H.S. above
+we obtain that
+E
+[
+∥δ1∥2
+]
+= (1−β)2 E
+[
+∥g1−∇LH(θ0)∥2
+]
++β2∥∇LH(θ0)∥2− 2β(1−β)⟨E [g1]−∇LH(θ0),∇LH(θ0)⟩.
+Recall that E [g1] =∇LH(θ0), and that (due to Assumption 2) E
+[
+∥g1−∇LH(θ0)∥2
+]
+≤σ2/(n−f). Therefore,
+E
+[
+∥δ1∥2
+]
+≤ (1−β)2σ2
+(n−f) +β2∥∇LH(θ0)∥2.
+Recall thatLH isL-smooth. Thus,∥∇LH(θ0)∥2≤ 2L(LH(θ0)−L∗) (see [37], Theorem 2.1.5). Therefore,
+E
+[
+∥δ1∥2
+]
+≤ (1−β)2σ2
+(n−f) + 2β2L(LH(θ0)−L∗).
+Substituting from above in (57) we obtain that
+V1≤ 2LH(θ0) +z
+((1−β)2σ2
+(n−f) + 2β2L(LH(θ0)−L∗)
+)
+.
+Recall that (1−β)2≤
+(
+1−β2)2
+= 576γ2L2. Using this, and the facts thatβ2 < 1 andz = 1
+8L, we obtain that
+V1≤ 2LH(θ0) + 1
+4(LH(θ0)−L∗) + 72γ2L2σ2
+L(n−f).
+Recall thata4 = 288L. Therefore,
+V1≤ 2LH(θ0) + 1
+4(LH(θ0)−L∗) + a4σ2
+4(n−f)γ2.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+Substituting the above in (56) we obtain that
+V1−VT +1≤ 2LH(θ0)− 2L∗ + 1
+4(LH(θ0)−L∗) + a4σ2
+4(n−f)γ2 = 9
+4(LH(θ0)−L∗) + a4σ2
+4(n−f)γ2.
+Substituting from above in (55) we obtain that
+1
+T
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤(4× 9
+4)(LH(θ0)−L∗)
+γT +
+(a4σ2
+n−f
+) γ
+T +a3κσ2γ + a4σ2
+(n−f)γ +a1κG2.
+Upon re-arranging the terms on R.H.S. above we obtain that
+1
+T
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤a1κG2 + 9(LH(θ0)−L∗)
+γT +
+(
+a3κ + a4
+n−f
+)
+σ2γ +
+(a4σ2
+n−f
+) γ
+T.
+Recall thata2
+2 = 36(LH(θ0)−L∗) anda2
+κ :=a3κ + a4
+n−f , we obtain that
+1
+T
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤a1κG2 + a2
+2
+4γT +a2
+κσ2γ +
+(a4σ2
+n−f
+) γ
+T (58)
+Final step. Recall that by deﬁnition
+γ = min
+{ 1
+24L, a2
+2aκσ
+√
+T
+}
+,
+and thus 1
+γ = max
+{
+24L, 2aκσ
+√
+T
+a2
+}
+≤ 24L + 2aκσ
+√
+T
+a2
+.
+Upon substituting this value ofγ in (58), and recalling thata5 = 6La2
+2, we obtain that
+1
+T
+T∑
+t=1
+E
+[∇LH(θt−1)
+2]
+≤a1κG2 + a2aκσ√
+T
++ 24La2
+2
+4T + a2a4σ2
+2(n−f)aκT
+3/2
+≤a1κG2 + a2aκσ√
+T
++ a5
+T + a2a4σ
+naκT
+3/2
+. (since n≥ 2f)
+Finally, recall from Algorithm 3 that ˆθ is chosen randomly from the set of computed parameter vectors
+(
+θ0,..., θ T−1
+)
+.
+Thus, E
+[∇LH
+(
+ˆθ
+)
+2]
+= 1
+T
+∑T
+t=1 E
+[∇LH(θt−1)
+2]
+. Substituting this above proves the theorem.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+13.3 Proof of Corollary 2: Analysis of Robust D-SHB with NNM
+Corollary 2. Let Assumption 1 hold and recall thatLH isL-smooth. Consider Algorithm 3 with aggregationF◦ NNM,
+under the same setting as Theorem 2. IfF is (f,κ )-robust withκ =O(1), then we have
+E
+[∇LH(ˆθ)
+
+2]
+=O
+(
+f/nG2 + 1/
+√
+T
+)
+,
+where the expectation is over the randomness of the algorithm.
+Proof. Let Assumption 1 hold. AssumeLH to beL-smooth andF to be (f,κ )-robust. First recall that, by Lemma 1, the
+compositionF◦ NNM is (f,κ′)-robust withκ′ = 8f
+n−f (κ + 1).
+Consider Algorithm 1 with aggregation ruleF◦ NNM, and learning rate and momentum coefﬁcient set as in Theorem 2.
+Following Theorem 2, and recalling the constants deﬁned in (37), we have for everyT≥ 1,
+E
+[∇LH(ˆθ)
+
+2]
+≤a1κ′G2 + a2aκ′σ√
+T
++ a5
+T + a2a4σ
+naκ′T
+3/2
+= 8a1f
+n−f (κ + 1)G2 + a2aκ′σ√
+T
++ a5
+T + a2a4σ
+naκ′T
+3/2
+.
+Recall thata2
+κ′ =a3κ′ + a4
+n−f = 8a3f
+n−f (κ + 1) + a4
+n−f . Asκ≥ 0 andκ =O(1) by assumption, we haveaκ′ = Θ(1). Now,
+ignoring constants and the last two terms on the RHS above (since they are dominated by 1√
+T ), we obtain
+E
+[∇LH(ˆθ)
+
+2]
+=O
+( f
+n−f (κ + 1)G2 + 1√
+T
+)
+.
+Recall that, asf <n/2, we have f
+n−f≤ 2f
+n . Thus, ifκ =O(1), we can write
+E
+[∇LH(ˆθ)
+
+2]
+=O
+(
+f/nG2 + 1/
+√
+T
+)
+.
+This concludes the proof.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+13.4 Proof of Supporting Lemmas
+13.4.1 Proof of Lemma 6
+We now recall Lemma 6 below, and present its proof.
+Lemma 6. Suppose that assumptions 2 and 1 hold true. Consider Algorithm 3. For eacht∈ [T ], we have
+E
+[
+1
+|H|
+∑
+i∈H
+m(i)
+t −mt
+
+2
+]
+≤ 3
+(1−β
+1 +β
+)(
+1 + 1
+n−f
+)
+σ2 + 3G2.
+Proof. Recall from (33) that
+mt := 1/(n−f )
+∑
+i∈H
+m(i)
+t .
+We consider an arbitraryi∈H . For simplicity we deﬁne
+gt := 1/(n−f )
+∑
+j∈H
+g(j)
+t . (59)
+Now, we consider an arbitrary stept∈ [T ]. Expanding the sum in (30) we obtain that
+m(i)
+t = (1−β)
+t∑
+k=1
+βt−kg(i)
+k .
+Therefore, applying Jensen’s inequality, we write
+E
+[
+1
+|H|
+∑
+i∈H
+m(i)
+t −mt
+
+2
+]
+= (1−β)2 E
+
+ 1
+|H|
+∑
+i∈H
+
+t∑
+k=1
+βt−k(g(i)
+k −gt)
+
+2
+
+≤ 3(1−β)2 E
+
+ 1
+|H|
+∑
+i∈H
+
+t∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1))
+
+2
+
++ 3(1−β)2 E
+
+ 1
+|H|
+∑
+i∈H
+
+t∑
+k=1
+βt−k(gk−∇LH(θk−1))
+
+2
+
++ 3(1−β)2 E
+
+ 1
+|H|
+∑
+i∈H
+
+t∑
+k=1
+βt−k(∇Li(θk−1)−∇LH(θk−1))
+
+2
+. (60)
+We obtain below upper bounds for each of the three terms on the right-hand side of (60).
+For the ﬁrst term on the R.H.S in (60) we denote
+At := E
+
+
+
+t∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1))
+
+2
+.
+We obtain that
+At = E
+
+
+
+t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1)) + (g(i)
+t −∇Li(θt−1))
+
+2
+
+= E
+
+
+
+t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1))
+
+2
+ + E
+[g(i)
+t −∇Li(θt−1)
+
+2]
++ 2 E
+[⟨t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1)), g(i)
+t −∇Li(θt−1)
+⟩]
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+The last term on the right-hand side is zero by the total law of expectation, and the unbiasedness of stochastic gradients
+(Assumption 2):
+E
+[⟨t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1)), g(i)
+t −∇Li(θt−1)
+⟩]
+= E
+[
+Et
+[⟨t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1)), g(i)
+t −∇Li(θt−1)
+⟩]]
+= E
+
+
+⟨t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1)), Et
+[
+g(i)
+t −∇Li(θt−1)
+]
+  
+=0
+⟩
+
+= 0.
+By Assumption 2, we have E
+[g(i)
+t −∇Li(θt−1)
+
+2]
+≤σ2. Thus, we have
+At≤ E
+
+
+
+t−1∑
+k=1
+βt−k(g(i)
+k −∇Li(θk−1))
+
+2
+ +σ2 =β2At−1 +σ2.
+By recursion, we obtain
+At≤β2(t−1)A1 +σ2
+t−2∑
+l=0
+β2l.
+AsA1 = E
+[g(i)
+1 −∇Li(θ0)
+
+2]
+≤σ2, from above we obtain that
+At≤σ2
+t−1∑
+l=0
+β2l≤ σ2
+1−β2. (61)
+For the second term on the R.H.S in (60), we denote
+Bt := E
+
+
+
+t∑
+k=1
+βt−k(gk−∇LH(θk−1))
+
+2
+.
+By Assumption 2 and the mutual independence of stochastic gradients we have
+E
+[
+∥gt−∇LH(θt−1)∥2
+]
+= 1
+(n−f)2
+∑
+i∈H
+E
+[g(i)
+t −∇LH(θt−1)
+
+2]
+≤ σ2
+n−f.
+Thus, similar to the bound onAt, we obtain that
+Bt≤ σ2
+(1−β2)(n−f). (62)
+For the third term on the R.H.S in (60), we denote
+Ct := E
+
+ 1
+|H|
+∑
+i∈H
+
+t∑
+k=1
+βt−k(∇Li(θk−1)−∇LH(θk−1))
+
+2
+.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+By applying Jensen’s inequality, followed by Assumption 1, we have
+Ct≤
+( t∑
+k=1
+βt−k
+)
+E
+[
+1
+|H|
+∑
+i∈H
+t∑
+k=1
+βt−k∥∇Li(θk−1)−∇LH(θk−1)∥2
+]
+=
+( t∑
+k=1
+βt−k
+)
+E
+[ t∑
+k=1
+βt−k 1
+|H|
+∑
+i∈H
+∥∇Li(θk−1)−∇LH(θk−1)∥2
+]
+≤
+( t∑
+k=1
+βt−k
+)2
+·G2≤ G2
+(1−β)2. (63)
+Finally, substituting from (61), (62) and (63) in (60) we obtain that
+E
+[
+1
+|H|
+∑
+i∈H
+m(i)
+t −mt
+
+2
+]
+≤ 3(1−β)2 1
+|H|
+∑
+i∈H
+(At +Bt +Ct)
+≤ 3(1−β)2 1
+|H|
+∑
+i∈H
+( σ2
+1−β2 + σ2
+(1−β2)(n−f) + G2
+(1−β)2
+)
+= 3 1−β
+1 +β
+(
+1 + 1
+n−f
+)
+σ2 + 3G2.
+The above proves the lemma.
+13.4.2 Proof of Lemma 7
+Lemma 7. Suppose that assumptions 1 and 2 hold true. Assume F is (f,κ )-robust. Consider Algorithm 3 with aggregation
+F . For each stept∈ [T ], we obtain that
+E
+[
+∥ξt∥2
+]
+≤ 6κ1−β
+1 +βσ2 + 48κG2.
+Proof. Recall from (31) and (34), respectively, that
+mt :=F
+(
+m(1)
+t ,..., m (n)
+t
+)
+and ξt :=mt−mt.
+We consider an arbitrary stept. SinceF is (f,κ )-robust, we obtain that
+∥ξt∥2 =∥mt−mt∥2≤ κ
+n−f
+∑
+i∈H
+m(i)
+t −mt
+
+2
+. (64)
+Upon taking total expectations on both sides we obtain that
+E
+[
+∥ξt∥2
+]
+≤ κ
+n−f
+∑
+i∈H
+E
+[m(i)
+t −mt
+
+2]
+. (65)
+From Lemma 6, under Assumption 2, we have
+E
+[
+1
+|H|
+∑
+i∈H
+m(i)
+t −mt
+
+2
+]
+≤ 3 1−β
+1 +β
+(
+1 + 1
+n−f
+)
+σ2 + 3G2
+≤ 6 1−β
+1 +βσ2 + 3G2. (n−f≥ 1)
+Substituting from above in (65) proves the lemma, i.e., we conclude that
+E
+[
+∥ξt∥2
+]
+≤ 6κ1−β
+1 +βσ2 + 3κG2.
+This concludes the proof.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+13.4.3 Proof of Lemma 8
+The proof of Lemma 8 is similar to that of Lemma 3 in [17]. We recall the lemma and the proof below for completeness.
+Lemma 8. Suppose that Assumption 2 holds. Recall thatLH isL-smooth. Consider Algorithm 3 with T >1. For allt≥ 2
+we obtain that
+E
+[
+∥δt∥2
+]
+≤β2c E
+[
+∥δt−1∥2
+]
++ 4γL(1 +γL)β2 E
+[∇LH(θt−2)
+2]
++ (1−β)2 σ2
+(n−f)
++ 2γL(1 +γL)β2 E
+[
+∥ξt−1∥2
+]
+,
+wherec := (1 +γL) (1 + 4γL).
+Proof. Recall from (35) that
+δt :=mt−∇LH
+(
+θt−1
+)
+.
+Consider an arbitrary stept> 1. Substituting from (30) and (33) we obtain that
+δt =βmt−1 + (1−β)gt−∇LH
+(
+θt−1
+)
+.
+Upon adding and subtractingβ∇LH(θt−2) andβ∇LH(θt−1) on the R.H.S. above we obtain that
+δt =βmt−1−β∇LH(θt−2) + (1−β)gt−∇LH (θt) +β∇LH(θt−1) +β∇LH(θt−2)−β∇LH(θt−1)
+=β
+(
+mt−1−∇LH(θt−2)
+)
++ (1−β)gt− (1−β)∇LH
+(
+θt−1
+)
++β
+(
+∇LH(θt−2)−∇LH(θt−1)
+)
+.
+Asmt−1−∇LH(θt−2) =δt−1 (by (35)), from above we obtain that
+δt =βδt−1 + (1−β)
+(
+gt−∇LH
+(
+θt−1
+))
++β
+(
+∇LH(θt−2)−∇LH(θt−1)
+)
+.
+Therefore,
+∥δt∥2 =β2∥δt−1∥2 + (1−β)2gt−∇LH
+(
+θt−1
+)2
++β2∇LH(θt−2)−∇LH(θt−1)
+2
++ 2β(1−β)
+⟨
+δt−1, gt−∇LH
+(
+θt−1
+)⟩
++ 2β2⟨
+δt−1,∇LH(θt−2)−∇LH(θt−1)
+⟩
++ 2β(1−β)
+⟨
+gt−∇LH
+(
+θt−1
+)
+,∇LH(θt−2)−∇LH(θt−1)
+⟩
+.
+By taking conditional expectation Et [·] on both sides, and recalling thatδt−1,θt−1 andθt−2 are deterministic values when
+the historyPt is given, we obtain that
+Et
+[
+∥δt∥2
+]
+=β2∥δt−1∥2 + (1−β)2Et
+[gt−∇LH
+(
+θt−1
+)2]
++β2∇LH(θt−2)−∇LH(θt−1)
+2
++
+2β(1−β)
+⟨
+δt−1, Et [gt]−∇LH
+(
+θt−1
+)⟩
++ 2β2⟨
+δt−1,∇LH(θt−2)−∇LH(θt−1)
+⟩
++ 2β(1−β)
+⟨
+Et [gt]−∇LH
+(
+θt−1
+)
+,∇LH(θt−2)−∇LH(θt−1)
+⟩
+.
+Recall thatgt := 1/(n−f )
+∑
+j∈Hg(i)
+t . Thus, we have Et [gt] =∇LH(θt−1). Using this above we obtain that
+Et
+[
+∥δt∥2
+]
+=β2∥δt−1∥2 + (1−β)2Et
+[gt−∇LH
+(
+θt−1
+)2]
++β2∇LH(θt−2)−∇LH(θt−1)
+2
++ 2β2⟨
+δt−1,∇LH(θt−2)−∇LH(θt−1)
+⟩
+.
+Also, by Assumption 2 and the fact that g(j)
+t ’s for j ∈ H are independent of each other, we obtain that
+Et
+[gt−∇LH
+(
+θt−1
+)2]
+≤ σ2
+(n−f ). Thus,
+Et
+[
+∥δt∥2
+]
+≤β2∥δt−1∥2 + (1−β)2 σ2
+(n−f) +β2∇LH(θt−2)−∇LH(θt−1)
+2
++ 2β2⟨
+δt−1,∇LH(θt−2)−∇LH(θt−1)
+⟩
+.
+By the Cauchy-Schwartz inequality,
+⟨
+δt−1,∇LH(θt−2)−∇LH(θt−1)
+⟩
+≤∥δt−1∥
+∇LH(θt−2)−∇LH(θt−1)
+. Since
+LH isL-smooth, we have
+∇LH(θt−2)−∇LH(θt−1)
+≤ L
+θt−1−θt−2
+. Recall from (32) thatθt = θt−1−γmt.
+Thus,
+∇LH(θt−2)−∇LH(θt−1)
+≤γL∥mt−1∥. Using this above we obtain that
+Et
+[
+∥δt∥2
+]
+≤β2∥δt−1∥2 + (1−β)2 σ2
+(n−f) +γ2β2L2∥mt−1∥2 + 2γβ 2L∥δt−1∥∥mt−1∥.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+As 2ab≤a2 +b2, from above we obtain that
+Et
+[
+∥δt∥2
+]
+≤β2∥δt−1∥2 + (1−β)2 σ2
+(n−f) +γ2β2L2∥mt−1∥2 +γLβ 2
+(
+∥δt−1∥2 +∥mt−1∥2
+)
+= (1 +γL)β2∥δt−1∥2 + (1−β)2 σ2
+(n−f) +γL(1 +γL)β2∥mt−1∥2. (66)
+By deﬁnition of ξt in (34), we have mt−1 = ξt−1 +mt−1. Thus, owing to the triangle inequality and the fact that
+2ab≤a2 +b2, we have∥mt−1∥2≤ 2∥ξt−1∥2 + 2∥mt−1∥2. Similarly, by deﬁnition of δt in (35), we have∥mt−1∥2≤
+2∥δt−1∥2 + 2
+∇LH(θt−2)
+2
+. Thus,∥mt−1∥2≤ 2∥ξt−1∥2 + 4∥δt−1∥2 + 4
+∇LH(θt−2)
+2
+. Using this in (66) we obtain
+that
+Et
+[
+∥δt∥2
+]
+≤(1 +γL)β2∥δt−1∥2 + (1−β)2 σ2
+(n−f)
++ 2γL(1 +γL)β2
+(
+∥ξt−1∥2 + 2∥δt−1∥2 + 2
+∇LH(θt−2)
+2)
+.
+By re-arranging the terms on the R.H.S. we get
+Et
+[
+∥δt∥2
+]
+≤β2(1 +γL) (1 + 4γL)∥δt−1∥2 + 4γL(1 +γL)β2∇LH(θt−2)
+2
++ (1−β)2 σ2
+(n−f)
++ 2γL(1 +γL)β2∥ξt−1∥2.
+Substitutingc = (1 +γL) (1 + 4γL) above we obtain that
+Et
+[
+∥δt∥2
+]
+≤β2c∥δt−1∥2 + 4γL(1 +γL)β2∇LH(θt−2)
+2
++ (1−β)2 σ2
+(n−f) + 2γL(1 +γL)β2∥ξt−1∥2.
+Recall thatt in the above is an arbitrary value in[T ] greater than 1. Hence, upon taking total expectation on both sides above
+proves the lemma.
+13.4.4 Proof of Lemma 9
+The proof of Lemma 9 is similar to that of Lemma 4 in [17]. We recall the lemma and the proof below for completeness.
+Lemma 9. Recall thatLH isL-smooth. Consider Algorithm 3. For allt∈ [T ], we obtain that
+E
+[
+2LH(θt)− 2LH(θt−1)
+]
+≤− γ (1− 4γL) E
+[∇LH(θt−1)
+2]
++ 2γ (1 + 2γL) E
+[
+∥δt∥2
+]
++ 2γ (1 +γL) E
+[
+∥ξt∥2
+]
+.
+Proof. Consider an arbitrary stept. SinceLH isL-smooth, we have (see [8])
+LH(θt)−LH(θt−1)≤
+⟨
+θt−θt−1,∇LH(θt−1)
+⟩
++ L
+2
+θt−θt−1
+2
+.
+Substituting from (36), i.e.,θt =θt−1−γmt−γξt, we obtain that
+LH(θt)−LH(θt−1)≤−γ
+⟨
+mt,∇LH(θt−1)
+⟩
+−γ
+⟨
+ξt,∇LH(θt−1)
+⟩
++γ2L
+2∥mt +ξt∥2
+=−γ
+⟨
+mt−∇LH(θt−1) +∇LH(θt−1),∇LH(θt−1)
+⟩
+−γ
+⟨
+ξt,∇LH(θt−1)
+⟩
++γ2L
+2∥mt +ξt∥2.
+By Deﬁnition (35),mt−∇LH(θt−1) =δt. Thus, from above we obtain that (scaling by factor of 2)
+2LH(θt)− 2LH(θt−1)≤− 2γ
+∇LH(θt−1)
+2
+− 2γ
+⟨
+δt,∇LH(θt−1)
+⟩
+− 2γ
+⟨
+ξt,∇LH(θt−1)
+⟩
++γ2L∥mt +ξt∥2.
+(67)
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+Now, we consider the last three terms on the R.H.S. separately. Using Cauchy-Schwartz inequality, and the fact that
+2ab≤ 1
+ca2 +cb2 for anyc> 0, we obtain that (by substitutingc = 2)
+2
+⏐⏐⟨
+δt,∇LH(θt−1)
+⟩⏐⏐≤ 2∥δt∥
+∇LH(θt−1)
+≤ 2
+1∥δt∥2 + 1
+2
+∇LH(θt−1)
+2
+. (68)
+Similarly,
+2
+⏐⏐⟨
+ξt,∇LH(θt−1)
+⟩⏐⏐≤ 2∥ξt∥
+∇LH(θt−1)
+≤ 2
+1∥ξt∥2 + 1
+2
+∇LH(θt−1)
+2
+. (69)
+Finally, using triangle inequality and the fact that 2ab≤a2 +b2 we have
+∥mt +ξt∥2≤ 2∥mt∥2 + 2∥ξt∥2 = 2
+mt−∇LH(θt) +∇LH(θt−1)
+2
++ 2∥ξt∥2
+≤ 4∥δt∥2 + 4
+∇LH(θt−1)
+2
++ 2∥ξt∥2. [since mt−∇LH(θt−1) =δt] (70)
+Substituting from (68), (69) and (70) in (67) we obtain that
+2LH(θt)− 2LH(θt−1)≤− 2γ
+∇LH(θt−1)
+2
++γ
+(
+2∥δt∥2 + 1
+2
+∇LH(θt−1)
+2
+)
++γ
+(
+2∥ξt∥2 + 1
+2
+∇LH(θt−1)
+2
+)
++γ2L
+(
+4∥δt∥2 + 4
+∇LH(θt−1)
+2
++ 2∥ξt∥2
+)
+.
+Upon re-arranging the terms in the R.H.S. we obtain that
+2LH(θt)− 2LH(θt−1)≤−γ (1− 4γL)
+∇LH(θt−1)
+2
++ 2γ (1 + 2γL)∥δt∥2 + 2γ (1 +γL)∥ξt∥2.
+Ast is arbitrarily chosen from [T ], taking expectation on both sides above proves the lemma.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+14 Experimental Setup
+14.1 Detailed Experimental Setup
+The architecture of the models, as well as additional details on the experimental setup, are presented in Table 3. Note that
+CNN stands for convolutional neural network, and NLL refers to the negative log likelihood loss. In order to present the
+architecture of the models used, we introduce the following compact notation.
+L(#outputs) represents a fully-connected linear layer , R stands for ReLU activation , S stands for log-softmax,
+C(#channels) represents a fully-connected 2D-convolutional layer (kernel size 5, padding 0, stride 1), M stands for
+2D-maxpool (kernel size 2), B stands for batch-normalization, and D represents dropout (with ﬁxed probability 0.25).
+.
+Dataset MNIST & Fashion-MNIST CIFAR-10
+Model type CNN CNN
+Model architecture C(20)-R-M-C(20)-R-M-L(500)-R-
+L(10)-S
+(3,32×32)-C(64)-R-B-C(64)-R-B-M-
+D-C(128)-R-B-C(128)-R-B-M-D-
+L(128)-R-D-L(10)-S
+Loss NLL NLL
+Gradient clipping 2 5
+ℓ2-regularization 10−4 10−2
+Number of steps T = 800 T = 2000
+Learning rate
+γt = 0.75
+1 +⌊ t
+50⌋ γt =
+{
+0.25 t≤ 1500
+0.025 1500 <t ≤ 2000
+Momentum parameter β = 0.9 β = 0.9, 0.99
+Batch size b = 25 b = 50
+Total number of workers n = 17 n = 17
+Number of Byzantine workers f = 4, 6, 8 f = 2, 3, 4
+Table 3: Model Architectures, Hyperparameters, and Distributed Settings
+On all datasets, we implement NNM and Bucketing with four aggregation rules namely geometric median (GM), coordinate-
+wise median (CWMed), coordinate-wise trimmed mean (CWTM), and Krum. In every setting, we execute the Bucketing
+algorithm with bucket sizes =⌊ n
+2f⌋ [26]. We also implement the vanilla aggregation rules.
+Note that whenf = 4 (out ofn = 17), Bucketing+CWMed and Bucketing+CWTM are exactly equivalent. In fact, when
+f = 4, buckets are of sizes = 2. Therefore, applying Bucketing results in a total ofn′ = 9 buckets, out of whichf′ = 4
+buckets might be potentially Byzantine (i.e., contaminated by at least one Byzantine worker). Therefore, we can clearly see
+that executing CWMed and CWTM withn′ = 9 andf′ = 4 (i.e., post Bucketing) outputs the same vector. Accordingly, we
+only show the performance of the learning under Bucketing+CWMed in the plots of Appendix 15 whenf = 4. Finally, note
+that we use folklore techniques from deep learning to improve accuracy, e.g. gradient clipping. The latter may in fact have
+an additional positive impact on the robust aggregation in our setting, which we also are investigating.
+14.2 Dataset Preprocessing
+MNIST receives an input image normalization of mean 0.1307 and standard deviation 0.3081, while Fashion-MNIST is
+expanded with horizontally ﬂipped images. Furthermore, the images of CIFAR-10 are horizontally ﬂipped, and per channel
+normalization is also applied with means 0.4914, 0.4822, 0.4465 and standard deviations 0.2023, 0.1994, 0.2010.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+14.3 Byzantine Attacks
+In our experiments, the Byzantine workers execute ﬁve state-of-the-art gradient attacks, namely A Little is Enough (ALIE) [5],
+Fall of Empires (FOE) [47], Sign-ﬂipping (SF) [3], Label-ﬂipping (LF) [3], and Mimic [26]. The ﬁrst three attacks rely on
+the same primitive explained below.
+Letat be the attack vector in stept andη≥ 0 a ﬁxed real number. In every stept, the Byzantine workers send to the server
+the Byzantine vectorBt =st +ηat, wherest is an estimation of the true gradient (or momentum) at stept.
+Experimentally, when running the gradient descent (GD) algorithm, we set st = 1
+|H|
+∑
+i∈H
+g(i)
+t , whereg(i)
+t is the gradient
+computed by honest worker wi in step t. However, when executing the stochastic heavy ball (SHB) method, we set
+st = 1
+|H|
+∑
+i∈H
+m(i)
+t , wherem(i)
+t is the momentum vector sent by honest workerwi in stept.
+• ALIE: In this attack,at =σt, whereσt is coordinate-wise standard deviation ofst.
+• FOE: In this attack,at =−st. All Byzantine workers thus send (1−η)st in stept.
+• SF: In this attack,at =−st, andη = 2. All Byzantine workers thus sendBt =at =−st in stept.
+In our experiments, as done in [42], we implement optimized versions of ALIE and FOE, where the optimalη is determined
+greedily by linearly searching over a deﬁned range of values. In every step t, we pick the value ofη that maximises the
+L2-distance between the output of the aggregation ruleRt at the server and the average of honest gradients or momentums,
+i.e.,st. In other words, we pick the value ofη that causes the maximum damage (in terms of L2-distance from the average
+of honest inputs) by the Byzantine workers.
+LF and Mimic on the other hand are executed as follows:
+• LF: Every Byzantine worker computes its gradient on ﬂipped labels. Since the labelsl for MNIST, Fashion-MNIST,
+and CIFAR-10 are in{0, 1,..., 9}, the Byzantine workers ﬂip the labels by computingl′ = 9−l on the batch, wherel′
+is the ﬂipped/modiﬁed label.
+• Mimic: All Byzantine workers “mimic” a certain honest worker by simply sending its gradient or momentum to the
+server. In order to chose which honest worker to mimic during the learning, we adopt the heuristic introduced by [26].
+14.4 Data Heterogeneity
+In order to simulate heterogeneity in our experiments, we sample from the original datasets (i.e., MNIST, Fashion-MNIST,
+and CIFAR-10) using a Dirichlet distribution of parameterα, which indicates the level of heterogeneity induced in the
+workers’ datasets. The smaller isα, the more heterogeneous is the setting (i.e., the more likely it is that workers possess
+samples from only one class). We consider three heterogeneity regimes in our experiments, namely extreme whereα = 0.1,
+moderate whereα = 1, and low whereα = 10. The corresponding distributions of the number of samples across workers
+and class labels (depending onα) are shown in Figure 3.
+Figure 3: Distribution of data samples across workers and class labels on MNIST/CIFAR-10 when sampling from a Dirichlet
+distribution of parameterα. Left:α = 0.1, Middle:α = 1, Right:α = 10.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+15 Full Experimental Results
+Section 15.1 presents our results on the MNIST dataset. Section 15.2 contains our results on Fashion-MNIST. Section 15.3
+shows the performance of our algorithm on CIFAR-10.
+15.1 Comprehensive Results on MNIST
+In this section, we present the entirety of our results on the MNIST dataset.
+15.1.1 Results on D-SHB
+We consider three Byzantine regimes: f = 4,f = 6, and f = 8 (largest possible) out of n = 17 workers in total. We
+also consider three heterogeneity regimes: α = 0.1 (extreme),α = 1 (moderate), and α = 10 (low). We compare the
+performance of NNM and Bucketing when executed with four aggregation rules namely Krum [7], GM [43], CWMed [48],
+and CWTM [48]. The plots are presented below and complement our (partial) results in Table 2 in Section 6.2 of the main
+paper. We note that in the two strongest Byzantine settings, i.e., whenf >4, Bucketing can only be applied with bucket
+sizes = 1 [26]. This means that whenf = 6, 8, executing Bucketing boils down to running the vanilla aggregation rules.
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 4: Experiments on MNIST using robust D-SHB with f = 4 amongn = 17 workers, withβ = 0.9 andα = 0.1. The
+Byzantine workers execute FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3).
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 5: Experiments on MNIST using robust D-SHB withf = 4 amongn = 17 workers, withβ = 0.9 andα = 1. The
+Byzantine workers execute FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3).
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 6: Experiments on MNIST using robust D-SHB withf = 4 amongn = 17 workers, withβ = 0.9 andα = 10. The
+Byzantine workers execute FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3).
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+GM
+CWMed
+CWTM
+Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 7: Experiments on MNIST using robust D-SHB withf = 6 amongn = 17 workers, withβ = 0.9 andα = 1. The
+Byzantine workers execute FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3).
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+GM
+CWMed
+CWTM
+Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 8: Experiments on MNIST using robust D-SHB withf = 6 amongn = 17 workers, withβ = 0.9 andα = 10. The
+Byzantine workers execute FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3).
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+GM
+CWMed
+CWTM
+Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 9: Experiments on MNIST using robust D-SHB withf = 8 amongn = 17 workers, withβ = 0.9 andα = 10. The
+Byzantine workers execute FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3).
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+15.1.2 Results on D-GD
+We also test our algorithm with robust D-GD on MNIST in one Byzantine regime:f = 4 Byzantine workers among a total
+ofn = 17 workers. We also consider three heterogeneity settings: α = 0.1,α = 1, andα = 10. The results are shown
+below, and convey the same observations made in Appendix 15.1.
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-GD
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 10: Experiments on MNIST using robust D-GD withf = 4 amongn = 17 workers, withα = 0.1. The Byzantine
+workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-GD
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 11: Experiments on MNIST using robust D-GD with f = 4 amongn = 17 workers, withα = 1. The Byzantine
+workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-GD
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 12: Experiments on MNIST using robust D-GD withf = 4 amongn = 17 workers, withα = 10. The Byzantine
+workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right), and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+15.1.3 Results on Other Aggregation Rules: MDA, MultiKrum, and MeaMed
+We also execute NNM with three additional aggregation rules namely MDA [40, 13], MeaMed [46], and Multi-Krum [7].
+The experimental setup is the following. We consider three Byzantine regimes:f = 4,f = 6, andf = 8 (largest possible)
+out ofn = 17 workers in total. We also consider three heterogeneity regimes:α = 0.1 (extreme),α = 1 (moderate), and
+α = 10 (low). We compare the performance of NNM and Bucketing when executed with MDA, MultiKrum, and MeaMed.
+The results (shown below) are very similar to the ones presented in Appendix 15.1, and convey exactly the same observations
+made in Section 6. Indeed, NNM combined with these methods provides consistently good performance on MNIST in
+three regimes of data heterogeneity and under ﬁve state-of-the-art Byzantine attacks. Given that no guarantees have yet
+been derived for these aggregation techniques, an interesting future direction would be to prove that MDA, MultiKrum,
+and MeaMed are (f,κ )-robust with κ∈O (1), conﬁrming the modularity of our solution as a reliable framework for
+heterogeneous Byzantine learning.
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+Figure 13: Experiments on MNIST using robust D-SHB withf = 4 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 0.1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+Figure 14: Experiments on MNIST using robust D-SHB withf = 4 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+Figure 15: Experiments on MNIST using robust D-SHB withf = 4 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+Figure 16: Experiments on MNIST using robust D-SHB withf = 6 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+Figure 17: Experiments on MNIST using robust D-SHB withf = 6 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+0 200 400 600 800 1000
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + MDA
+NNM + Multi-Krum
+NNM + MeaMed
+Figure 18: Experiments on MNIST using robust D-SHB withf = 8 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+15.2 Comprehensive Results on Fashion-MNIST
+In this section, we showcase our results on the Fashion-MNIST dataset. We consider two Byzantine regimes:f = 4 and
+f = 6 out ofn = 17 workers in total. We also consider three heterogeneity regimes:α = 0.1 (extreme),α = 1 (moderate),
+andα = 10 (low). We plots compare the performance of NNM and Bucketing when executed with four aggregation rules
+namely Krum, GM, CWMed, and CWTM. The plots are presented below. We note that in the strongest Byzantine setting,
+i.e., when f > 4, Bucketing can only be applied with bucket size s = 1 [26]. This means that when f = 6, executing
+Bucketing boils down to running the vanilla aggregation rules.
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 19: Experiments on Fashion-MNIST using robust D-SHB with f = 4 Byzantine among n = 17 workers, with
+β = 0.9 andα = 0.1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF
+(row 2, right), and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 20: Experiments on Fashion-MNIST using robust D-SHB with f = 4 Byzantine among n = 17 workers, with
+β = 0.9 andα = 1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row
+2, right), and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+ Bucketing + GM
+ Bucketing + CWMed
+ Bucketing + Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 21: Experiments on Fashion-MNIST using robust D-SHB with f = 4 Byzantine among n = 17 workers, with
+β = 0.9 andα = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF
+(row 2, right), and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+GM
+CWMed
+CWTM
+Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 22: Experiments on Fashion-MNIST using robust D-SHB with f = 6 Byzantine among n = 17 workers, with
+β = 0.9 andα = 1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row
+2, right), and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+D-SHB
+NNM + GM
+NNM + CWMed
+NNM + CWTM
+NNM + Krum
+GM
+CWMed
+CWTM
+Krum
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+0 200 400 600 800
+Step number
+0.00
+0.25
+0.50
+0.75
+1.00T est accuracy
+Figure 23: Experiments on Fashion-MNIST using robust D-SHB with f = 6 Byzantine among n = 17 workers, with
+β = 0.9 andα = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF
+(row 2, right), and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+15.3 Comprehensive Results on CIFAR-10
+In this section, we present the entirety of our results on CIFAR-10. We consider three Byzantine regimes:f = 2,f = 3,
+andf = 4 out ofn = 17 workers in total. We also consider two heterogeneity regimes: α = 1 (moderate), andα = 10
+(low). We compare the performance of NNM and Bucketing when executed with four aggregation rules namely Krum, GM,
+CWMed, and CWTM. The plots are presented below and complement our (partial) results in Figure 1 in Section 6.3 of the
+main paper.
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+Figure 24: Experiments on CIFAR-10 using robust D-SHB withf = 2 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+Figure 25: Experiments on CIFAR-10 using robust D-SHB withf = 2 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+Figure 26: Experiments on CIFAR-10 using robust D-SHB withf = 3 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 1. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Allouah, Farhadkhani, Guerraoui, Gupta, Pinot, Stephan
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+Figure 27: Experiments on CIFAR-10 using robust D-SHB withf = 3 Byzantine amongn = 17 workers, withβ = 0.9 and
+α = 10. The Byzantine workers execute the FOE (row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2, right),
+and LF (row 3) attacks.
+Fixing by Mixing: A Recipe for Optimal Byzantine ML under Heterogeneity
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+D-SHB
+NNM+GM
+NNM+CWMed
+NNM+CWTM
+NNM+Krum
+ Bucketing+GM
+ Bucketing+CWMed
+ Bucketing+Krum
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+0 500 1000 1500 2000
+Step number
+0.0
+0.2
+0.4
+0.6
+0.8T est accuracy
+Figure 28: Experiments on CIFAR-10 using robust D-SHB withf = 4 Byzantine amongn = 17 workers, withβ = 0.99
+andα = 10. The Byzantine workers execute the FOE ( row 1, left), ALIE (row 1, right), Mimic (row 2, left), SF (row 2,
+right), and LF (row 3) attacks.

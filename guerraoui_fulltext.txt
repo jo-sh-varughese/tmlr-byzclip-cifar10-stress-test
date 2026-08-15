@@ -1,0 +1,1631 @@
+Differential Privacy and Byzantine Resilience in SGD:
+Do They Add Up?
+Rachid Guerraoui
+rachid.guerraoui@epfl.ch
+Ecole Polytechnique Fédérale de
+Lausanne (EPFL)
+Lausanne, Switzerland
+Nirupam Gupta
+nirupam.gupta@epfl.ch
+Ecole Polytechnique Fédérale de
+Lausanne (EPFL)
+Lausanne, Switzerland
+Rafaël Pinot
+rafael.pinot@epfl.ch
+Ecole Polytechnique Fédérale de
+Lausanne (EPFL)
+Lausanne, Switzerland
+Sébastien Rouault
+sebastien.rouault@epfl.ch
+Ecole Polytechnique Fédérale de
+Lausanne (EPFL)
+Lausanne, Switzerland
+John Stephan
+john.stephan@epfl.ch
+Ecole Polytechnique Fédérale de
+Lausanne (EPFL)
+Lausanne, Switzerland
+Abstract
+This paper addresses the problem of combining Byzantine resilience
+with privacy in machine learning (ML). Specifically, we study if a
+distributed implementation of the renowned Stochastic Gradient
+Descent (SGD) learning algorithm is feasible with both differential
+privacy (DP) and(𝛼,𝑓)-Byzantine resilience. To the best of our
+knowledge, this is the first work to tackle this problem from a the-
+oretical point of view. A key finding of our analyses is that the
+classical approaches to these two (seemingly) orthogonal issues are
+incompatible. More precisely, we show that a direct composition
+of these techniques makes the guarantees of the resulting SGD
+algorithm depend unfavourably upon the number of parameters
+of the ML model, making the training of large models practically
+infeasible. We validate our theoretical results through numerical
+experiments on publicly-available datasets; showing that it is im-
+practical to ensure DP and Byzantine resilience simultaneously.
+CCS Concepts
+• Security and privacy→ Privacy-preserving protocols; • Mathe-
+matics of computing→ Continuous optimization.
+Keywords
+Machine learning, Differential privacy, Byzantine resilience, SGD
+ACM Reference Format:
+Rachid Guerraoui, Nirupam Gupta, Rafaël Pinot, Sébastien Rouault, and John
+Stephan. 2021. Differential Privacy and Byzantine Resilience in SGD: Do
+They Add Up?. In Proceedings of the 2021 ACM Symposium on Principles
+of Distributed Computing (PODC ’21), July 26–30, 2021, Virtual Event, Italy.
+ACM, New York, NY, USA, 11 pages. https://doi.org/10.1145/3465084.3467919
+Permission to make digital or hard copies of all or part of this work for personal or
+classroom use is granted without fee provided that copies are not made or distributed
+for profit or commercial advantage and that copies bear this notice and the full citation
+on the first page. Copyrights for components of this work owned by others than ACM
+must be honored. Abstracting with credit is permitted. To copy otherwise, or republish,
+to post on servers or to redistribute to lists, requires prior specific permission and/or a
+fee. Request permissions from permissions@acm.org.
+PODC ’21, July 26–30, 2021, Virtual Event, Italy
+© 2021 Association for Computing Machinery.
+ACM ISBN 978-1-4503-8548-0/21/07. . . $15.00
+https://doi.org/10.1145/3465084.3467919
+1 Introduction
+The massive amounts of data generated daily call for distributed ma-
+chine learning (ML). Essentially, different nodes collaborate to train
+a joint model on a collective dataset. Clearly, an aggregate model
+would be more accurate than individually-trained models on small
+subsets of data. However, two reasons prevent the explicit sharing
+of personal data. Firstly, in many classification tasks, training data
+is sensitive and should remain private, e.g., financial and medical
+fields. Secondly, datasets can be quite large (e.g., Open Images [20],
+ImageNet [12]) and their sharing computationally expensive.
+The most popular scheme to train ML models in a distributed set-
+ting is Stochastic Gradient Descent (SGD) [7]: it enables to train
+the aggregate model by simply exchanging gradients of the loss
+function (instead of the training data itself). Underlying SGD lies
+an iterative method to optimize the objective function 𝑄(𝑤) by
+stochastically estimating the gradient∇𝑄(𝑤) and then computing
+a gradient descent step on𝑤. There are several system models for
+distributed SGD training, such as the parameter server [ 22] and
+ring all-reduce models [26]. The parameter server model is one of
+the most adopted distributed learning topologies (Fig. 1(a)), where
+nodes send their gradients to a central trusted entity, namely the
+parameter server, responsible of updating the model parameters
+by aggregating the received gradients. The parameter server model
+is also the backbone of the popular setting in distributed learning
+today, Federated Learning [19]. Averaging the received gradients is
+typically used by the parameter server as aggregation method [27],
+assuming the nodes correctly compute unbiased estimates of the
+gradient. However, releasing gradients in a distributed framework
+results in the emergence of two orthogonal threats: Byzantine gra-
+dients and data leakage.
+Byzantine Gradients The learning can be critically influenced by
+Byzantine gradients (i.e., vectors that are not unbiased estimates of
+the true gradient) sent by the nodes during the training [3, 38]. We
+call these gradients, as well as the nodes that send them, Byzantine.
+We can distinguish two types of Byzantine gradients: erroneous
+gradients that correspond to arbitrary failures during the gradi-
+ent computation (e.g., software bugs, loss of precision, mislabeling
+arXiv:2102.08166v3  [cs.LG]  24 Jun 2021
+Parameter
+server
+(a) Trusted Parameter Server With 8 (Honest) Workers
+Honest
+workers
+Curious
+parameter
+server
+Byzantine
+workers
+(b) Honest-but-Curious Parameter Server With 8 Workers,
+Including 3 Byzantine Nodes
+Figure 1: Parameter Server Model
+in local dataset, network asynchrony), and malicious gradients
+which are forged vectors sent by malicious participants in an at-
+tempt to poison the learning. In both cases, the injected Byzantine
+gradients can prevent the collective model from converging to asat-
+isfying state, i.e., a final accuracy that is comparable to the accuracy
+resulting from a training with no Byzantine workers.
+With Byzantine nodes hindering the training, simply averaging
+the received gradients prior to updating the global model parame-
+ters is not Byzantine-resilient. Consequently, several gradient ag-
+gregation rules (GAR), such as Krum [5], MDA [15], or Median [40]
+have been designed to tolerate a certain threshold of Byzantine
+nodes in the network.
+Data Privacy ML models are known to leak information about
+their training data [29, 31, 43]. In the context of distributed SGD
+training, despite the existence of several network architectures,
+gradients are typically exchanged in the clear (unencrypted) be-
+tween the different nodes, potentially causing data leaks. Zhu et al.
+recently developed an attack [43] confirming that gradients inher-
+ently contain information about the training samples that acurious
+parameter server can exploit to violate the privacy of data nodes.
+Several privacy-preserving implementations of the distributed SGD
+scheme have been developed. Among them, the dominant tech-
+nique is to inject Gaussian or Laplace noise to the gradients to
+ensure differential privacy (DP) [24, 30]. In addition to being the
+gold standard for data privacy in the ML community, DP enables
+us to theoretically study the privacy guarantees it provides in the
+presence of a curious parameter server , thanks to two privacy
+parameters𝜖 and𝛿. Reasonable privacy budgets(𝜖,𝛿) typically lie
+in the range(0, 1)2 [14].
+Problem Statement In a distributed SGD framework, the two
+aforementioned threats have been mainly tackled separately. We
+are the first to theoretically study the possibility of satisfying both
+(𝛼,𝑓)-Byzantine resilience [5] and DP in a decentralized SGD sys-
+tem. In this paper, we study the possibility of combining (𝛼,𝑓)-
+Byzantine resilience with DP via noise injection. To this end, we
+adopt the (now classical) parameter server model with a total of
+𝑛 workers among which a maximum of 𝑓 ≤ 𝑛 workers can be
+Byzantine and may collude. Furthermore, we consider the param-
+eter server to be honest-but-curious, meaning that it correctly
+computes aggregate gradients in each step of the training but it
+can also use the received gradients to violate the privacy of the
+honest workers. The resulting framework is illustrated in Fig. 1(b).
+At first glance, combining(𝛼,𝑓)-Byzantine resilience with DP by
+noise injection in distributed SGD seems like a simple extension
+of the Byzantine-resilient scenario with no privacy. In fact, it does
+not require any modification to the classical distributed SGD proto-
+col or even the infrastructure of the parameter server model (no
+encryption protocol, no key distribution, no secret sharing, etc.).
+Furthermore, the noise is injected locally by every honest worker.
+Since there are existing solutions for(𝛼,𝑓)-Byzantine resilient SGD,
+controlling the levels of noise added to the gradients should be suffi-
+cient to enforce Byzantine resilience while still achieving moderate
+but acceptable levels of privacy. However, our results show that
+(𝛼,𝑓)-Byzantine resilience and DP do not add up.
+Contributions We show that combining the two orthogonal no-
+tions, DP and(𝛼,𝑓)-Byzantine resilience, depends on the number
+of parameters (denoted by𝑑) of the learning model. In short, we
+show that when 𝑑 is large, DP and Byzantine resilience do not
+fit well together. We first study the general case when the cost
+function, associated with the learning problem, may be non-convex.
+In this particular case, we show that in order to guarantee(𝛼,𝑓)-
+Byzantine resilience when DP noise is injected, either the batch size
+must grow linearly with
+√
+𝑑, or the fraction of Byzantine workers in
+the system 𝑓
+𝑛 must decrease with
+√
+𝑑. Given that𝑑 is indeed one of
+the largest variables in contemporary learning problems [8, 21, 32],
+and that certain state-of-the-art models often exceed 100 M parame-
+ters [41], this dependence on𝑑 clearly highlights the impracticality
+of satisfying both DP and Byzantine resilience. Our results apply
+to the most well-known statistically-robust and(𝛼,𝑓)-Byzantine
+resilient GARs such as MDA [15], Krum [5], etc. For example, for
+MDA, we state the following result.
+Proposition (Informal). Let(𝜖,𝛿)∈( 0, 1)2 be the privacy budget
+used to inject DP noise to the gradients, and 𝑏 be the batch size
+used. Then, we can only guarantee(𝛼,𝑓)-Byzantine resilience if
+the fraction of Byzantine nodes is in𝑂
+
+𝑏√
+𝑑+𝑏
+
+.
+Next, for a more fine-grained analysis on the impact of DP noise
+on the Byzantine-resilient SGD scheme, we study a less general
+setting where the cost function is assumed strongly-convex. In
+this particular case, we show that forany (existing or non-existing)
+(𝛼,𝑓)-Byzantine resilient GAR, the SGD algorithm with DP noise
+still suffers from the curse of dimensionality. Specifically, we show
+that the training error rate may grow linearly with𝑑. On the other
+hand, the training error rate of the same algorithm without DP
+noise is independent of𝑑.
+Theorem. (Informal) The distributed SGD algorithm combining
+(𝛼,𝑓)-Byzantine resilience and(𝜖,𝛿)-DP has a training error rate
+of Θ
+𝑑 log(1/𝛿)
+𝑇𝑏 2𝜖 2
+
+, where𝑇 denotes the number of steps and𝑏 is the
+batch size.
+Note that in this work, we employ the Gaussian mechanism [13]
+to ensure(𝜖,𝛿)-DP. Nonetheless, our key findings on the imprac-
+ticality of simultaneously ensuring DP and Byzantine resilience
+remain unchanged when adapting our results to support other noise
+injection techniques such as the Laplacian mechanism [13].
+2 Background
+2.1 The Classical Distributed SGD Model
+Let us first recall how the distributed SGD protocol works in the
+classical (simplified) scenario where all 𝑛 workers are assumed
+to be honest. Let 𝑄 be the cost function to minimize and D the
+ground-truth data distribution. Let𝑡 be the current training step and
+𝑤𝑡∈ R𝑑 be the model parameters at step𝑡. Each worker𝑊𝑖 locally
+samples a random training batch 𝜉(𝑖)
+𝑡 from the data distribution
+D to compute an unbiased estimate𝑔(𝑖)
+𝑡 of the gradient∇𝑄(𝑤𝑡).
+This means that,𝑔(1)
+𝑡 , ...,𝑔(𝑛)
+𝑡 are i.i.d. random vectors such that
+E𝜉(𝑖)
+𝑡
+h
+𝑔(𝑖)
+𝑡
+i
+=∇𝑄(𝑤𝑡). Then, all the workers send their gradients
+to the parameter server. The training is divided into sequential
+synchronous steps, hence the parameter server considers any non-
+received gradient to be 0. After gathering the submitted gradients,
+the server uses a deterministic GAR, denoted by𝐹, to compute the
+resulting aggregate gradient𝐺𝑡𝑎𝑔𝑔 =𝐹(𝑔(1)
+𝑡 ,...,𝑔 (𝑛)
+𝑡 ). In the honest
+scenario with no Byzantine workers, 𝐹 is simply the averaging
+function, i.e.,𝐺𝑡𝑎𝑔𝑔 = 1
+𝑛
+𝑛Í
+𝑖=1
+𝑔(𝑖)
+𝑡 . Then, the server uses the aggregate
+gradient to update the model parameters
+𝑤𝑡+1 =𝑤𝑡−𝛾𝑡𝐺𝑡
+𝑎𝑔𝑔 (1)
+where𝛾𝑡 is the learning rate in step𝑡. Finally, the server broadcasts
+the new parameter vector𝑤𝑡+1 to all workers.
+Remark 1. It’s important to note that only integrity and authen-
+tication are guaranteed on the communication channels between
+workers and server. Gradients are shared in the clear in the network.
+2.2 Byzantine SGD
+In the presence of Byzantine workers sending arbitrary gradients,
+averaging the received gradients at the parameter server cannot
+be used to update the model parameters (Eq. 1) anymore. In fact,
+Blanchard et al. [ 5] prove that any aggregation rule based on a
+linear combination of the received gradients is not robust in a pa-
+rameter server model containing at least one Byzantine node. In
+order to enable the underlying model to converge, it is crucial to
+use a GAR that is robust to Byzantine gradients. Blanchard et al.
+formulate desirable robustness properties of GARs by introducing
+the notion of(𝛼,𝑓)-Byzantine resilience [5] that can tolerate up to
+𝑓 Byzantine nodes in the system.
+(𝜶 , 𝒇)-Byzantine Resilience Let𝛼∈[ 0, 𝜋
+2[ be an angle, and let
+𝑛 be the total number of nodes in the system. Let 0≤ 𝑓 ≤𝑛 be an
+upper bound on the number of Byzantine nodes. Let 𝑔(𝑖)
+𝑡 denote
+the gradient worker𝑊𝑖 sends to the server at step𝑡. If𝑊𝑖 is honest
+(i.e., non-Byzantine), then𝑔(𝑖)
+𝑡 ∼𝐺𝑡 where E[𝐺𝑡] is equal to the
+true gradient∇𝑄(𝑤𝑡), i.e., E[𝐺𝑡] =∇𝑄(𝑤𝑡). Otherwise, if𝑊𝑖 is
+Byzantine, then𝑔(𝑖)
+𝑡 can be an arbitrary vector.
+𝐹 is said to be(𝛼,𝑓)-Byzantine resilient if for any input gradients
+the output𝑅𝑡 =𝐹(𝑔(1)
+𝑡 ,...,𝑔 (𝑛)
+𝑡 ) satisfies:
+(1)⟨E[𝑅𝑡],∇𝑄(𝑤𝑡)⟩≥( 1− sin𝛼)||∇𝑄(𝑤𝑡)|| 2 > 0
+(2) For𝑟∈{ 2, 3, 4}, E[||𝑅𝑡||𝑟] is upper bounded by a linear com-
+bination of the terms E[||𝐺𝑡||𝑟1],..., E[||𝐺𝑡||𝑟𝑘], where
+𝑟1+...+𝑟𝑘 =𝑟
+Condition (1) ensures that the vector angle between the true gradi-
+ent∇𝑄(𝑤𝑡) and the expected output𝑅𝑡 of the GAR is sufficiently
+acute. This implies a positive lower bound on the scalar product
+between∇𝑄(𝑤𝑡) and E[𝑅𝑡]. Condition (2) ensures the bounded-
+ness of the 2𝑛𝑑, 3𝑟𝑑 , and 4𝑡ℎ order moments of the GAR output𝑅𝑡 ,
+which is generally required to formally guarantee the convergence
+of the underlying SGD algorithm [ 5, 6]. Some of the most popu-
+lar(𝛼,𝑓)-Byzantine resilient GARs include MDA [15], Krum [5],
+Bulyan [23], Median [40], Meamed [36], Phocas [37], and Trimmed
+Mean [40]. Note that this definition of Byzantine resilience also ap-
+plies when the gradients sent by the workers are noisy (see Eq.(7)).
+VN Ratio Condition A sufficient condition for an aggregation
+rule𝐹 to guarantee(𝛼,𝑓)-Byzantine resilience is for the standard
+deviation of the submitted gradients to be smaller than the norm of
+the true gradient scaled by a multiplicative constant𝑘𝐹(𝑛,𝑓) that
+depends on𝐹 [5, 23]. Precisely, the following inequality must hold:
+√︃
+E
+
+∥𝐺𝑡− E[𝐺𝑡]∥ 2
+∥E[𝐺𝑡]∥ ≤𝑘𝐹(𝑛,𝑓) (2)
+Hereafter, we refer to the left hand side of this inequality as the
+variance-to-norm ratio (VN ratio). Accordingly, we call Eq. (2) the
+VN ratio condition. This condition can be used even in non-trivial
+learning problems (e.g., when loss function𝑄 is non-convex) and
+has been extensively studied in the context of Byzantine-resilient
+SGD [5, 23, 40]. While the VN ratio condition is only sufficient, due
+to the lack of necessary conditions in the literature, it remains the
+only existing technique to theoretically test for (𝛼,𝑓 )-Byzantine
+resilience of GARs.
+Remark 2. Our results in Sections 3 and 4 apply for any so-
+called statistically-robust GAR, i.e., a GAR which solely uses present
+(and/or past) submitted gradients to filter out potential attacks. The
+literature also proposes two other families of GARs:suspicion-based
+[39] and redundancy-based [9]. The suspicion-based family relies
+on the parameter server having access to a possibly large training
+set sampled from the same distribution as the workers. This family
+of GARs is not private and thus, outside the scope of this paper.
+The redundancy-based family requires the honest workers to share
+the exact same training set, and the server to use coding theory in
+order to detect and filter out Byzantine gradients. This does not fit
+our model as it is unclear whether these coding techniques remain
+applicable when honest workers also add their own privacy noise.
+2.3 Differential Privacy (DP)
+Privacy definition DP [14] is a gold standard notion for privacy-
+preserving data analysis. In the context of machine learning, it
+guarantees that a randomized algorithm computed on a batch of
+training samples gives a statistically indistinguishable result when
+computed on an adjacent batch. In this work, we consider two data
+batches𝜉 and𝜉′ to be adjacent, denoted by𝜉∼𝜉′, if they differ by
+at most one sample.
+More precisely, we consider𝜖 > 0 and𝛿∈[ 0, 1]. A randomized al-
+gorithmM is(𝜖,𝛿)-differentially private if for any adjacent batches
+𝜉 and𝜉′ and any possible set of outputs𝑂, the following holds:
+𝑃[M(𝜉)∈ 𝑂]≤ 𝑒𝜖×𝑃
+
+M(𝜉′)∈ 𝑂
+
++𝛿. (3)
+The privacy budget(𝜖,𝛿) measures the amount of privacy the mech-
+anism holds.𝜖 controls the privacy/utility trade-off. This means
+that smaller values of𝜖 ensure a higher level of privacy, but usually
+hurt the accuracy of the model.𝛿 can be seen as a failure parameter.
+It is actually the parameter that controls the approximation one
+allows when enforcing DP. The smaller𝛿, the stronger the privacy
+definition. In fact,𝛿 has to be cryptographically small for(𝜖,𝛿)-DP
+to offer strong privacy guarantees [14, Section 2].
+In the context of distributed learning, DP can be achieved by
+assuming the existence of a trusted aggregation server that gathers
+the private information of every worker and releases a sanitized
+(perturbed) version of the output. However, assuming the existence
+of a third-party server that every worker trusts with their data is
+genuinely impractical. In this work, we study a more realistic setting
+where the server ishonest-but-curious. As stated in the introduction,
+the server cannot be trusted to ensure the privacy of the training
+datasets belonging to the nodes, but computes the aggregation of
+gradients correctly. In this context, the responsibility to guarantee
+the privacy of the personal databases is delegated to the workers.
+Specifically, this means that every worker𝑊𝑖 designs its own local
+randomizerM𝑖 to send a perturbed version of its gradient to the
+untrusted server. We call the distributed system(𝜖,𝛿)-differentially
+private if every local randomizer is(𝜖,𝛿)-differentially private.
+The Gaussian Mechanism & Noisy Gradients One of the most
+common approaches to build a differentially private algorithm is to
+use Gaussian noise injection [13]. This scheme is called the Gaussian
+mechanism. The application of this mechanism, in the context of
+distributed SGD with an honest-but-curious server, is to inject
+Gaussian noise to the gradients computed by the different workers
+before sending them to the parameter server. Specifically, let𝜉(𝑖)
+𝑡 ≜n
+𝑥(𝑖,1)
+𝑡 , ... , 𝑥(𝑖,𝑏)
+𝑡
+o
+be the batch sampled by honest worker𝑊𝑖 in
+step𝑡. Let alsoℎ be the function that computes the gradient to be
+sent to the server, prior to injecting the DP noise,
+ℎ :𝜉(𝑖)
+𝑡 →𝑔(𝑖)
+𝑡 = 1
+𝑏
+𝑏∑︁
+𝑗=1
+∇𝑄
+
+𝑤𝑡,𝑥(𝑖,𝑗)
+𝑡
+
+. 1 (4)
+Then, the amount of noise required to ensure that this sanitizing
+strategy guarantees a given privacy budget(𝜖,𝛿) depends on the
+1𝑄(𝑤) actually represents the expected cost function evaluated at 𝑤, where the
+expectation is taken overD. But, by abuse of notation, we also denote by𝑄(𝑤,𝑥)
+the empirical counterpart of this cost function computed on a given sample𝑥∼D .
+the sensitivity of the mappingℎ defined as follows,
+Δℎ = max
+𝜉1∼𝜉2
+∥ℎ(𝜉1)− ℎ(𝜉2)∥2. (5)
+In particular, if we assume that all gradients in our model are
+bounded in L2-norm by𝐺𝑚𝑎𝑥 > 0, the sensitivity Δℎ of the gradi-
+ent function is upper-bounded by 2𝐺𝑚𝑎𝑥
+𝑏 . We can then show that
+the Gaussian mechanism satisfies DP. Formally, let us consider
+(𝜖,𝛿) ∈ (0, 1)2 and denote 𝑠 = 2𝐺𝑚𝑎𝑥
+√
+2 log(1.25/𝛿)
+𝑏𝜖 . Then, the
+algorithm
+M :𝜉(𝑖)
+𝑡 →𝑜(𝑖)
+𝑡 =ℎ(𝜉(𝑖)
+𝑡 )+ 𝒚 (𝒊)
+𝒕 with 𝒚 (𝒊)
+𝒕 ∼N
+
+0,𝐼𝑑×𝑠2
+
+(6)
+is(𝜖,𝛿)-differentially private (see [14, Appendix A] for a detailed
+proof of this statement). Accordingly, for any step𝑡, the procedure
+that consists in every𝑊𝑖 sending the noisy gradient
+𝑜(𝑖)
+𝑡 =𝑔(𝑖)
+𝑡 + 𝒚(𝑖)
+𝑡 (7)
+to the parameter server is(𝜖,𝛿)-differentially private. Finally, given
+a per-step privacy budget(𝜖,𝛿), we can rely on the composition
+property of DP to determine the privacy guarantees of the overall
+learning procedure. For example, the classical composition theo-
+rem [14] states that the DP guarantees of sequential steps add up
+linearly. Note also that to obtain better DP guarantees in the context
+of SGD, we can call for more refined tools, such as the moments
+accountant [2]. However, in this work, we are mainly interested in
+the impact of the per-step privacy budget on the robustness of the
+system to Byzantine nodes.
+Remark 3. Before going further, let us highlight a few points.
+• Although we focus on Gaussian noise injection in this work,
+our results in Sections 3 and 4 can easily be adapted to any
+other DP mechanism based on noise injection (e.g., the Lapla-
+cian mechanism [13]). Therefore, in the remainder of this
+work, we no longer mention the Gaussian mechanism when
+talking about DP noise injection.
+• Note that the Gaussian mechanism assumes (𝜖,𝛿 ) to be in
+(0, 1)2, which is typically the per-step privacy budget con-
+sidered in the literature [2, 4, 25] (even in challenging tasks
+such as deep learning). Therefore, in the remainder of this
+paper, we assume w.l.o.g that𝜖 < 1 and𝛿 < 1.
+3 Incompatibility of (𝛼,𝑓)-Byzantine
+Resilience and DP in SGD (General Setting)
+First, we study the framework for distributed SGD in the general
+setting, i.e., without making any assumption on the convexity of the
+objective function𝑄. In order for the DP noise to be well calibrated,
+we assume the norm of gradients to be bounded. This assumption
+can be typically enforced via gradient clipping [42] methods.
+Assumption 1 (Bounded norm). There exists a real value𝐺𝑚𝑎𝑥 >
+0 such that for any learning step𝑡 and any parameter vector𝑤𝑡 ,
+∥∇𝑄(𝑤𝑡)∥≤𝐺𝑚𝑎𝑥 .
+In this context, as discussed in Section 2.2, the onlyexisting method
+to guarantee(𝛼,𝑓)-Byzantine resilience for an aggregation rule𝐹 is
+verifying the VN ratio condition. Hence, combining DP with Byzan-
+tine resilience requires the VN ratio to still be upper bounded by
+𝑘𝐹(𝑛,𝑓) after injecting the noise to the gradients. Precisely, to guar-
+antee that a gradient aggregation step is both(𝜖,𝛿)-differentially
+private and(𝛼,𝑓)-Byzantine resilient, the following must hold:
+√︂
+E
+
+∥𝐺𝑡− E[𝐺𝑡]∥ 2
++ 8𝑑𝐺 2
+𝑚𝑎𝑥
+𝜖 2𝑏2 log
+
+1.25
+𝛿
+
+∥E[𝐺𝑡]∥ ≤𝑘𝐹(𝑛,𝑓), (8)
+where𝑑 is the size of the model, 𝑏 is the batch size, and (𝜖,𝛿)
+is the per-step privacy budget. Eq. (8) is the direct adaptation of
+Eq. (2) after accounting for the variance of the Gaussian noise in
+the numerator of the VN ratio (refer to Section 2.3). This adaptation
+simply comes from decomposing the variance of𝑜(𝑖)
+𝑡 into the sum
+of the variances of the independent random variables𝑔(𝑖)
+𝑡 and 𝒚(𝑖)
+𝑡
+respectively.
+In the high privacy regime, i.e., when both𝜖 and𝛿 approach 0, we
+see that the VN ratio increases, making it more difficult to satisfy
+Eq. 8 and thus, ensure(𝛼,𝑓)-Byzantine resilience. In fact, we show
+that the VN ratio condition can only hold if either the batch size
+𝑏 is in Ω
+√
+𝑑
+
+or the proportion of Byzantine nodes in the system
+𝑓
+𝑛 is in𝑂
+
+1√
+𝑑
+
+, depending on the GAR used as shown in Table 1.
+Below, we demonstrate this statement by focusing on one popular
+GAR called MDA [15] for space limitation, but similar results also
+hold for the other GARs from the literature, as illustrated in Table 1
+(detailed proofs are deferred to the Appendix).
+Proposition 1. Let(𝜖,𝛿)∈( 0, 1)2 be the constant privacy budget
+used to inject DP noise to the gradients and𝐹 = MDA. Then, the
+VN ratio condition can only hold if 𝑓
+𝑛∈𝑂
+
+𝑏√
+𝑑+𝑏
+
+.
+Sketch of proof. We reason by contraposition to show that 𝑓
+𝑛∈
+𝑂
+
+𝑏√
+𝑑+𝑏
+
+is necessary for the VN ratio condition to hold. This
+means that we will actually find a sufficient condition for it not to
+hold. First, notice that regardless of the GAR used, the VN ratio
+condition does not hold if√︂
+E
+
+∥𝐺𝑡− E[𝐺𝑡]∥ 2
++ 8𝑑𝐺 2
+𝑚𝑎𝑥
+𝜖 2𝑏2 log
+
+1.25
+𝛿
+
+∥E[𝐺𝑡]∥ >𝑘𝐹(𝑛,𝑓).
+Since E
+
+∥𝐺𝑡− E[𝐺𝑡]∥ 2
+≥ 0, the above inequality holds if
+∥E[𝐺𝑡]∥ <𝐺𝑚𝑎𝑥×
+vut
+8𝑑
+log
+
+1.25
+𝛿
+
+𝜖2𝑏2 × 1
+𝑘𝐹(𝑛,𝑓).
+Let us denote𝐶 =𝜖/
+√︂
+log
+
+1.25
+𝛿
+
+. Since𝐺𝑚𝑎𝑥 is the maximal
+L2 norm gradients can have and E[𝐺𝑡] =∇𝑄(𝑤𝑡), the VN ratio
+condition does not hold whenever√︂
+8𝑑
+𝐶2𝑏2× 1
+𝑘𝐹(𝑛,𝑓) > 1⇔ 1
+𝑘𝐹(𝑛,𝑓) > 𝑏×𝐶√
+8𝑑
+.
+Now, notice that since𝐹 = MDA, we have𝑘𝐹(𝑛,𝑓) =(𝑛−𝑓)/(
+√
+8𝑓).
+If we denote by𝜏 = 𝑓
+𝑛 the proportion of Byzantine workers in the
+system, we have𝑘𝐹(𝑛,𝑓) =(1−𝜏)/(
+√
+8𝜏). Then the above inequal-
+ity can be rewritten as 8
+√
+𝑑𝜏 >(1−𝜏)𝐶×𝑏, which is equivalent to
+saying that𝜏 >(𝐶×𝑏)/(8
+√
+𝑑+𝐶×𝑏).
+Finally, since the privacy budget(𝜖,𝛿)∈( 0, 1)2,𝐶 is a negligible
+constant w.r.t𝑏 and𝑑. Then, when computing a differentially private
+gradient step, the VN ratio cannot hold unless 𝑓
+𝑛∈𝑂
+
+𝑏√
+𝑑+𝑏
+
+. □
+Proposition 1 implies that ensuring both DP and(𝛼,𝑓)-Byzantine
+resilience with MDA requires the batch size 𝑏 to grow linearly
+with the square root of the number of parameters (
+√
+𝑑), or for the
+fraction of Byzantine nodes 𝑓
+𝑛 to converge towards 0 at the rate
+of
+√
+𝑑. For example, if we consider the ResNet-50 model [41, Table
+8] where𝑑 = 25.6× 106 parameters, then the we need a batch
+size𝑏 > 5000, which is clearly impractical. In this context, we
+can only ensure protection against Byzantine nodes in the trivial
+setting where almost all workers are honest. Although we only
+state this incompatibility result for MDA, similar results can be
+demonstrated for any GAR from the literature using the same proof
+scheme. Table 1 summarizes the necessary conditions for the VN
+ratio condition (Eq. (8)) to hold depending on the GAR at hand.
+Table 1: Necessary condition for the VN ratio condition to
+hold in the context of(𝜖,𝛿)-DP distributed SGD, for 7 differ-
+ent GARs form the literature.
+Krum, Median,
+Bulyan, Meamed MDA Phocas, Trimmed Mean
+𝑏∈ Ω(
+√
+𝑛𝑑) 𝑓
+𝑛∈𝑂
+
+𝑏√
+𝑑+𝑏
+ 𝑓
+𝑛∈𝑂
+
+𝑏2
+𝑑+𝑏2
+
+Next, to get a more fine-grained analysis on the impact of noise
+injection on the (𝛼,𝑓)-Byzantine resilience property of the dis-
+tributed SGD scheme, we study the particular case where the loss
+function is strongly convex.
+4 Learning with Byzantine Resilience and DP:
+The Case of Strong-Convexity
+In this section, we take a step forward and show that regardless of
+the GAR used, the training error rate deteriorates in the presence
+of Byzantine workers when injecting DP noise to the gradients, as
+specified in Section 2.3. For simplicity of presentation, we assume
+the cost function𝑄(𝑤) to be strongly convex, the gradient∇𝑄(𝑤)
+to be globally Lipschitz continuous, and the stochastic gradients
+∇𝑄(𝑤, 𝑥)𝑥∼D to have bounded variance for all𝑤. It is important to
+note that these assumptions hold true in many distributed learning
+problems [8]. We state these assumptions formally as follows.
+Assumption 2 (Strong convexity). There exists a finite real value
+𝜆 > 0 such that for all𝑤,𝑤 ′∈ R𝑑,
+
+𝑤−𝑤′,∇𝑄(𝑤)−∇ 𝑄(𝑤′)
+
+≥𝜆
+𝑤−𝑤′2.
+Assumption 3 (Lipschitznes). There exists a finite positive real
+value𝜇 such that
+∇𝑄(𝑤)−∇ 𝑄(𝑤′)
+≤ 𝜇
+𝑤−𝑤′, ∀𝑤,𝑤 ′∈ R𝑑.
+Assumption 4 (Bounded variance). There exists a positive real
+value𝜎 <∞ such that for all𝑤,
+E𝑥∼D
+
+∥∇𝑄(𝑤, 𝑥)−∇𝑄(𝑤)∥ 2
+≤𝜎 2.
+Under the above assumptions, we show in Theorem 1 that even
+if we were to successfully design a GAR that is(𝛼, 𝑓)-Byzantine
+resilient whilst guaranteeing(𝜖, 𝛿)-DP using noise injection, the
+training error rate of the distributed SGD algorithm is 𝑂(𝑑/𝑇)
+where𝑇 denotes the number of steps. On the other hand, we can
+show from Eq. (12) below, that the same distributed SGD algorithm
+with(𝛼, 𝑓)-Byzantine resilience can obtain a training error rate of
+𝑂(1/𝑇) in the absence of DP. In the remainder of the section, let
+𝜉𝑡 denote the random data points sampled by the workers in step𝑡,
+and let E𝜉𝑡[·] denote the conditional expectation with respect to𝜉𝑡 ,
+given the estimate𝑤𝑡 . For𝑡≥ 1, let E𝑡[·] = E𝜉1... E𝜉𝑡[·]. Then,
+the following theorem holds.
+Theorem 1. Suppose that Assumptions 1, 2, 3, and 4 hold true.
+Consider a GAR named 𝐹 : R𝑑×𝑛 → R𝑑. Suppose that in each
+step𝑡, the server updates its learning parameter𝑤𝑡 using the noisy
+gradients
+n
+𝑜(1)
+𝑡 ,...,𝑜 (𝑛)
+𝑡
+o
+specified in Section 2.3 and GAR 𝐹 as
+follows:
+𝑤𝑡+1 =𝑤𝑡−𝛾𝑡𝐹
+
+𝑜(1)
+𝑡 ,...,𝑜 (𝑛)
+𝑡
+
+. (9)
+Let𝑄∗ = min𝑤∈R𝑑𝑄(𝑤). If𝐹 is(𝛼, 𝑓)-Byzantine resilient for steps
+1 to𝑇 , and𝛾𝑡 = 1
+𝜆(1−sin𝛼)𝑡 , then
+E𝑇
+
+𝑄(𝑤𝑇+1)− 𝑄∗
+∈ Θ
+𝑑 log(1/𝛿)
+𝑇𝑏 2𝜖2
+
+.
+Sketch of proof. We let𝐹𝑡≜𝐹
+
+𝑜(1)
+𝑡 ,...,𝑜 (𝑛)
+𝑡
+
+. The proof relies
+on the following key observation that holds true when𝐹𝑡 is assumed
+(𝛼, 𝑓)-Byzantine resilient for steps 1 to𝑇 :
+⟨E𝜉𝑡[𝐹𝑡],∇𝑄(𝑤𝑡)⟩≥( 1− sin𝛼)∥∇𝑄(𝑤𝑡)∥2 > 0. (10)
+Also, there exists a real-value𝑐 > 0 such that for each𝑡∈{ 1,...,𝑇 },
+E𝜉𝑡
+
+∥𝐹𝑡∥2
+≤𝑐
+𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+. (11)
+The details for obtaining the results in (10) and (11) can be found
+in Appendix B. From (9) and Assumption 3, we obtain for all𝑡 that
+𝑄(𝑤𝑡+1)≤ 𝑄(𝑤𝑡)− 𝛾𝑡⟨∇𝑄(𝑤𝑡), 𝐹𝑡⟩+ 1
+2𝜇𝛾 2
+𝑡 ∥𝐹𝑡∥2.
+As E𝜉𝑡[𝑄(𝑤𝑡)] =𝑄(𝑤𝑡), the above implies that, for all𝑡,
+E𝜉𝑡[𝑄(𝑤𝑡+1)]≤𝑄(𝑤𝑡)− 𝛾𝑡
+
+∇𝑄(𝑤𝑡), E𝜉𝑡[𝐹𝑡]
+
++ 1
+2𝜇𝛾 2
+𝑡 E𝜉𝑡
+
+∥𝐹𝑡∥2
+.
+Substituting from (10), and then using the fact that∥∇𝑄(𝑤𝑡)∥2≥
+2𝜆(𝑄(𝑤𝑡)− 𝑄∗) under Assumption 2, we obtain that
+E𝜉𝑡[𝑄(𝑤𝑡+1)]−𝑄∗≤(1− 2𝜆(1− sin𝛼)𝛾𝑡)  𝑄(𝑤𝑡)− 𝑄∗
++ 1
+2𝜇𝛾 2
+𝑡 E𝜉𝑡
+
+∥𝐹𝑡∥2
+, for𝑡 = 1,...,𝑇.
+Substituting from (11), and then taking expectation E𝜉1... E𝜉𝑡−1
+on both sides above (for𝑡 > 1), we obtain that
+E𝑡[𝑄(𝑤𝑡+1)]−𝑄∗≤(1− 2𝜆(1− sin𝛼)𝛾𝑡)  E𝑡−1[𝑄(𝑤𝑡)]−𝑄∗
++ 1
+2𝜇𝑐
+𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+𝛾 2
+𝑡, for𝑡 = 2,...,𝑇.
+Thus, from recursive substitutions we obtain that
+E𝑇[𝑄(𝑤𝑇+1)]−𝑄∗≤ 1
+𝑇+ 1
+ 𝜇𝑐
+2𝜆2(1− sin𝛼)2
+ 𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+(12)
+Substituting from Section 2.3,𝑠 = 2𝐺𝑚𝑎𝑥
+√
+2 log(1.25/𝛿)
+𝑏𝜖 , implies
+E𝑇[𝑄(𝑤𝑇+1)]−𝑄∗∈𝑂
+𝑑 log(1/𝛿)
+𝑇𝑏 2𝜖2
+
+.
+To prove the lower bound we consider a specific cost function
+𝑄(𝑤) := (1/2) E𝑥∼D∥𝑤−𝑥∥2 whereD =N
+
+¯𝑥, 𝜎 2
+𝑑 𝐼𝑑
+
+where
+¯𝑥∈ R𝑑. Note that in this case, the minimum point𝑤∗ of𝑄(𝑤) is
+simply ¯𝑥. Thus,𝑄∗ =(1/2) E𝑥∼D
+
+∥¯𝑥−𝑥∥2
+, and for any𝑤∈ R𝑑,
+𝑄(𝑤) = 1
+2 E𝑥∼D
+
+∥𝑤− ¯𝑥+ ¯𝑥−𝑥∥2
+= 1
+2∥𝑤− ¯𝑥∥2+𝑄∗.
+Now, we consider a hypothetical GAR𝐹 that outputs the gradient of
+an honest worker in each step𝑡.2 As the gradients of honest workers
+are unbiased estimators of the true gradient, this particular GAR is
+indeed(𝛼, 𝑓)-Byzantine resilient. The problem of computing𝑤∗ us-
+ing outputs of𝐹, operating on noisy workers’ gradients (defined in
+Section 2.3), in𝑇 steps is equivalent to estimating¯𝑥 using𝑇 noisy ob-
+servations{¯𝑥+𝑧𝑡; 1≤𝑡≤𝑇} where𝑧𝑡∼N
+
+0,
+
+𝜎 2
+𝑑𝑏+𝑑𝑠 2
+
+𝐼𝑑
+
+,∀𝑡.
+Hence, by the Cramér-Rao bound [28], for any (stochastic) estimate
+^𝑤 of ¯𝑥 after𝑇 steps, E
+
+∥ ^𝑤− ¯𝑥∥2
+≥
+
+𝜎 2
+𝑏 +𝑑𝑠 2
+
+1
+𝑇 . Thus,
+E[𝑄( ^𝑤)]−𝑄∗≥
+𝜎 2
+𝑏 +𝑑𝑠 2
+ 1
+2𝑇.
+Substituting𝑠 above proves the lower bound.
+□
+According to Theorem 1, the training error rate may degrade lin-
+early with the size 𝑑 of the learning model, for a fixed privacy
+budget(𝜖, 𝛿) and a fixed batch size 𝑏. Now, if 𝑏∈ Ω(
+√
+𝑑), then
+Theorem 1 along with the observations in Table 1 implies that the
+distributed SGD algorithm with DP gradients and(𝛼,𝑓)-Byzantine-
+resilient GARs (e.g., Krum and MDA) may attain a training error
+rate of𝑂(1/𝑇), which is indeed optimal [8, Section 4]. However, in
+many cases,𝑏∈ Ω(
+√
+𝑑) is practically not viable, as argued in Sec-
+tion 3 through the example of ResNet-50. In the next section, we see
+that even for moderate model sizes, combining DP and Byzantine
+resilience requires impractically large batches.
+5 Experimental Support
+Our theory predicts that the training batch size 𝑏 must grow as
+fast as
+√
+𝑑 to satisfy the VN ratio condition of Byzantine-resilient
+GARs3. Even for small neural networks (𝑑≈ 105), our theoretical
+results already suggest that unrealistically large batch sizes are
+required to satisfy this VN condition.
+In this section, we experiment training with a smaller, convex
+model, measuring how the loss and accuracy respectively evolve
+with the privacy parameter 𝜖 and the training batch size 𝑏. We
+2In practice, such a GAR may never exist as the identity of honest workers is a priori
+unknown.
+3Our analysis shows that such a condition exists for all known statistically-robust
+Byzantine-resilient GARs, when the ratio of Byzantine workers 𝑓
+𝑛 is fixed.
+Without privacy noise With privacy noise ( 𝜖 = 0.2)
+Figure 2: In this set of experiments, 𝑏 = 50. Without any DP,
+the minimum loss is reached in less than 100 steps, no mat-
+ter which or whether an attack occurred. When DP noise
+is used, the unattacked case remains essentially unaffected,
+the minimum loss being reached in 50 steps in both cases.
+We finally observe that, when DP noise is employed under at-
+tack, the protection provided by MDA (despite MDA offering
+the highest known upper bound of the VN ratio) is notice-
+ably lowered: this is an instance of the antagonism between
+privacy noise and(𝛼,𝑓)-Byzantine resilience.
+notice that while DP and Byzantine resilience can most of the time
+be guaranteed alone, combining the two proves to be difficult even
+with the fairly small (𝑑 = 69) model at hand.
+5.1 Experimental Setup
+We train a logistic regression model on the academic phishing
+dataset4. Each datapoint in thephishing dataset contains 68 features,
+and so our model has 𝑑 = 69 parameters (there is an additional
+parameter for the bias). We use the mean square error as training
+loss. The model is trained with SGD over 1000 iterations, with a
+fixed learning rate of 𝜂 = 2 and a momentum of 0.99. Stochas-
+tic gradients are clipped to a maximumℓ2-norm of𝐺𝑚𝑎𝑥 = 10−2.
+Each worker adds a privacy noise only after clipping the original
+gradient. We set the privacy parameter𝛿 = 10−6.
+The phishing dataset contains 11 055 datapoints. We split them
+into training and testing sets, containing 8 400 and 2 655 datapoints
+respectively. We measure (1) the cross-accuracy achieved by the
+logistic regression over the entire testing set every 50 steps, and
+at each step (2) the average loss achieved by the model over the
+training datapoints sampled by the honest workers. The values of
+the privacy parameter 𝜖 and the training batch size 𝑏 are varied
+across experiments; refer to the full version of the paper5.
+State-of-the-art attacks We consider two recent state-of-the-
+art attacks [16]. Both attacks follow the same core principle. Let
+𝜈∈ R≥0 be a non-negative factor, and 𝑎𝑡 ∈ R𝑑 an attack vector
+which depends on the attack used (see below for possible values
+of𝑎𝑡 ). At each step 𝑡, each Byzantine worker submits the same
+Byzantine gradient:𝑔𝑡+𝜈𝑎𝑡 , where𝑔𝑡 is an approximation of the
+real gradient∇𝑄  𝑤𝑡
+ at step𝑡, and𝜈 is a constant (see below).
+4https://www.csie.ntu.edu.tw/~cjlin/libsvmtools/datasets/
+5https://arxiv.org/abs/2102.08166v1
+Without privacy noise With privacy noise ( 𝜖 = 0.2)
+Figure 3: Compared to Fig. 2, we set a much smaller train-
+ing batch size 𝑏 = 10. Decreasing 𝑏 increases the variance
+of honest gradients. While the unattacked setting without
+DP noise remains mostly unaffected here, adding noise sig-
+nificantly hampers the training even without attack. This
+“extreme” configuration (with Fig. 4 on the other side of the
+spectrum) reminds that in practice (i.e., in a finite number
+of steps) mere convergence, even without attack or DP, al-
+ready requires a sufficiently low variance. Both Byzantine
+resilience and DP step this intrinsic requirement up.
+Without privacy noise With privacy noise ( 𝜖 = 0.2)
+Figure 4: Compared to Fig. 2, we set a much larger train-
+ing batch size 𝑏 = 500. Increasing 𝑏 decreases the vari-
+ance of the honest gradients. Training remains unaffected:
+the minimum loss and maximum accuracy achieved by
+the unattacked, non differentially-private runs are also
+achieved under attack and/or with the privacy noise. This
+“extreme” configuration (with Fig. 3 on the other side of the
+spectrum) highlights that this incompatibility between DP
+and Byzantine resilience is not about an impossibility in the
+strict sense of the term, but more about an antagonism that
+may prove difficult to resolve in practice ( 𝑏 = 500 is unrea-
+sonably high considering the minimal loss can be attained
+with only𝑏 = 10, i.e., 50× less training samples).
+• A Little is Enough [3]: in this attack, each Byzantine worker
+submits𝑔𝑡+𝜈𝑎𝑡 , with𝑎𝑡≜−𝜎𝑡 the opposite of the coordinate-
+wise standard deviation of the honest gradient distribution. Our
+experiments use𝜈 = 1.5, as proposed by the original paper.
+• Fall of Empires [38]: each Byzantine worker submits(1−𝜈)𝑔𝑡 ,
+i.e.,𝑎𝑡≜−𝑔𝑡 . The original paper tested𝜈′∈{ -10, -1, 0, 0.1, 0.2,
+0.5, 1, 10, 100}, our experiments use6𝜈 = 1.1, corresponding in
+the notation of the original paper to𝜈′≜−(1−𝜈) = 0.1.
+Choice of GAR In all our experiments, the parameter server uses
+MDA to aggregate the received gradients. MDA has one of the
+largest VN ratio upper bounds ( 𝑘𝐹(𝑛,𝑓), Eq. (8)) among known
+(𝛼,𝑓)-Byzantine resilient GARs7, and the largest among the pre-
+sented GARs (Section 2.2).
+Distributed setting We set a fixed total of𝑛 = 11 workers, among
+which 𝑓 = 5 can be Byzantine. When the server uses MDA to
+aggregate gradients, the Byzantine workers implement the same
+attack, either [3] or [38] (see above). When averaging is used, the𝑓
+workers do not implement any attack and behave as honest workers.
+5.2 Experimental Results
+We test the variation of the following parameters: (1) the batch
+size𝑏 used to estimate each gradient, (2) the privacy parameter𝜖
+(see the full version of paper), and (3) the attack used (either [ 3]
+or [38]). For each combination of these 3 parameters, we compare
+the results obtained (a) without any privacy or attack, (b) under
+attack without DP noise, (c) with DP noise but without attack and
+(d) both under attack and with DP noise. We report on the average
+and standard deviation of both the cross-accuracy and the average
+loss achieved by the model.
+Reproducibility Each experimental setup is repeated 5 times,
+with specified seeds (in 1 to 5). We provide the code employed in
+this paper [1]. All our results, including the graphs, are reproducible
+in one command (see the README).
+Result overview While a larger, more systematic sweep of hy-
+perparameters is available in the full version of the paper, here
+we report on a representative subset of behaviors. Fig. 2 displays
+the evolution of the considered metrics, under attack or not, with
+or without DP, with an arguably reasonable training batch size
+(𝑏 = 50) for the ML task at hand8. We also report on two opposed
+“extreme” settings, for which either no DP/Byzantine behavior alone
+can be tolerated (Fig. 3), or both DP and Byzantine behaviors can
+be tolerated together without affecting much the accuracy/loss of
+the model (Fig. 4).
+The practical difficulty to reconcile DP with ( 𝛼,𝑓 )-Byzantine
+resilience is conspicuous in our results, even with the purposely
+small (𝑑 = 69) model at hand. The training batch size for which
+both notions can be combined (𝑏 = 500, Fig. 4) is 10 times larger
+than the training batch size for which either of the two techniques
+can be used alone (𝑏 = 50, Fig. 2), and at least 50 times larger than
+the batch size necessary to achieve mere convergence without any
+DP or Byzantine resilience (𝑏 = 10, Fig. 3).
+The other takeaway from our experimental results, particularly
+visible with the hyperparameter sweep featured in the full ver-
+sion, is that slightly larger privacy noises gracefully translates into
+6This factor made this attack consistently successful in the original paper.
+7We believe that no other(𝛼,𝑓 )-Byzantine resilient GAR has a higher tolerance than
+MDA in practice, but since the literature on the matter is quickly growing, we simply
+prefer to remain cautious.
+8Among all tested batch sizes,𝑏 = 50 is the smallest for which both the attack/non-
+DP and non-attack/DP settings achieve performances fairly similar to the non-
+attacked/non-DP case; see the full version of the paper to compare the selected set
+with other sets of hyperparameters.
+slightly lower performances (lower accuracy and higher loss); not
+any abrupt decrease in performances, which could have been antic-
+ipated due to the existence of Byzantine workers. This observation
+is predicted by the theory presented in Section 4, as the loss of
+the considered ML task is convex. So at least for convex problems,
+the practitioner can always trade some accuracy for some privacy
+(despite the potential presence of adversarial workers), and more
+computation time (larger training batch size) for more accuracy.
+6 Related Work
+There has been several efforts to implement the SGD algorithm in
+a way to protect the privacy of the training data. The problem was
+tackled both in the centralized setting [2, 11, 34] and in the feder-
+ated learning setting with multiple workers collaborating to train
+an aggregate model [24, 30]. The idea mainly consists in adding
+DP noise to the gradients computed by the different workers, as
+explained in Section 2.3. Other techniques have investigated en-
+crypting the gradients shared in the distributed network [18, 35]
+to prevent a passive attacker from violating the privacy of data
+nodes by simply intercepting the gradients exchanged. However,
+the Byzantine resilience aspect of distributed SGD is outside the
+scope of these works: the presented solutions do not account for
+Byzantine data nodes that can disrupt the training by sending erro-
+neous gradients.
+A different line of research has been devoted to developing Byzan-
+tine resilience schemes for federated learning, i.e., designing GARs
+that are robust to a certain fraction of the data nodes being Byzan-
+tine [5, 15, 23, 36, 37, 40]. However, these papers do not consider
+the privacy threat associated with sharing gradients in the clear
+among participants.
+Recently, some works tried to simultaneously mitigate both threats.
+Hi et al. propose a Byzantine-resilient and privacy-preserving so-
+lution [17]. However, the authors adopt a weaker threat model
+than ours by assuming the presence of two non-colluding and
+honest-but-curious servers, which is a stronger assumption than
+the single-server solution. Furthermore, the authors use additive
+secret sharing to protect the privacy of the data, which provide
+weaker guarantees than DP. We also mention BREA [33], that is a
+single-server approach but does not use DP either. The approach
+that might be the most related to our work is LearningChain [10]
+since it seems to be the only other framework that combines DP
+and Byzantine resilience. Although Chen et al. claim they solve
+this problem, LearningChain remains an experimental method. In
+fact, the authors do not provide any theoretical guarantees on the
+Byzantine resilience or convergence of their𝑙-nearest aggregation
+algorithm [10], as done by other works also constructing Byzantine-
+resilient GARs [5, 23].
+7 Concluding Remarks
+This paper provides the first theoretical analysis on the problem of
+combining DP and(𝛼,𝑓)-Byzantine resilience in distributed SGD
+frameworks. Our theoretical and experimental findings show that
+the problem is indeed challenging and that the classical noise injec-
+tion techniques for DP make the Byzantine resilience of the SGD
+algorithm depend unfavorably on the size of the model. Combin-
+ing these two concepts for large models such as neural networks
+is thus impractical, and potentially requires designing of alternate
+techniques, be it for DP or Byzantine resilience. For instance, having
+observed that DP noise makes the variance of the gradients grow
+linearly with size 𝑑 of the ML model, it would be interesting to
+study whether variance reduction techniques [8, Section 5], such as
+dynamic sampling or exponential gradient averaging, can alleviate
+this dependence on model size.
+An alternate future direction for this work is to design differentially
+private schemes that depend less on the size of the ML model. For
+example, we could complement classical noise injection techniques
+with cryptographic primitives to provably reduce the variance of
+the injected noise while still ensuring (𝜖,𝛿)-DP. We could also
+investigate shuffling techniques for privacy amplification [44]. Fur-
+thermore, our work mainly focuses on statistically-robust GARs.
+As such, other families of(𝛼,𝑓)-Byzantine resilient GARs, such as
+suspicion-based [39] and redundancy-based [9] GARs, do not com-
+ply with the setting we considered for privacy reasons. It would be
+interesting to study whether they could be adapted to meet strong
+privacy requirements in the context of distributed SGD.
+Acknowledgments
+John Stephan and Sébastien Rouault have been supported in part by
+the Swiss National Science Foundation (FNS grant N°200021_182542).
+Rafaël Pinot has been supported in part by Ecocloud, an EPFL re-
+search center (Postdoctoral Research Award).
+A Impracticality Results and Proofs
+Proof of Proposition 1.
+Proof. We reason by contraposition to show that𝑓
+𝑛∈𝑂
+
+𝑏√
+𝑑+𝑏
+
+is necessary for the VN ratio condition to hold. This means that
+we will actually find a sufficient condition for it not to hold. First,
+notice that regardless of the GAR we use, the VN ratio condition
+does not hold if√︂
+E
+
+∥𝐺𝑡− E[𝐺𝑡]∥ 2
++ 8𝑑𝐺 2
+𝑚𝑎𝑥
+𝜖 2𝑏2 log
+
+1.25
+𝛿
+
+∥E[𝐺𝑡]∥ >𝑘𝐹(𝑛,𝑓).
+In particular, since E
+
+∥𝐺𝑡− E[𝐺𝑡]∥ 2
+≥ 0, the above inequality
+hold as soon as √︂
+8𝑑𝐺 2
+𝑚𝑎𝑥
+𝜖 2𝑏2 log
+
+1.25
+𝛿
+
+∥E[𝐺𝑡]∥ >𝑘𝐹(𝑛,𝑓).
+With some rewriting, we get the following inequality
+∥E[𝐺𝑡]∥ <𝐺𝑚𝑎𝑥×
+vut
+8𝑑
+log
+
+1.25
+𝛿
+
+𝜖2𝑏2 × 1
+𝑘𝐹(𝑛,𝑓).
+Let us denote𝐶 =𝜖/
+√︁
+log(1.25/𝛿). Since𝐺𝑚𝑎𝑥 is the maximal L2
+norm the gradient can take and E[𝐺𝑡] =∇𝑄(𝑤𝑡), the VN ratio
+condition does not hold whenever√︂
+8𝑑
+𝐶2𝑏2× 1
+𝑘𝐹(𝑛,𝑓) > 1⇔ 1
+𝑘𝐹(𝑛,𝑓) > 𝑏×𝐶√
+8𝑑
+. (13)
+Now, notice that since𝐹 = MDA, we have𝑘𝐹(𝑛,𝑓) =(𝑛−𝑓)/(
+√
+8𝑓).
+If we denote by 𝜏 = 𝑓
+𝑛 the proportion of Byzantine workers in
+the system, we have 𝑘𝐹(𝑛,𝑓) =(1−𝜏)/(
+√
+8𝜏). Then the above
+inequality can be rewritten as 8
+√
+𝑑𝜏 > (1−𝜏)𝐶×𝑏, which is
+equivalent to saying that𝜏 >(𝐶×𝑏)/(8
+√
+𝑑+𝐶×𝑏).
+Finally, since(𝜖,𝛿)∈( 0, 1)2,𝐶 is a negligible constant w.r.t𝑏
+and𝑑. Then, when computing a differentially private gradient step,
+the VN ratio cannot hold unless 𝑓
+𝑛 is in𝑂
+
+𝑏√
+𝑑+𝑏
+
+. □
+Proposition 2. Let(𝜖,𝛿)∈( 0, 1)2 be the constant privacy budget
+used to inject DP noise to the gradients and𝐹∈{ Krum, Bulyan,
+Median, Meamed}. Then, the VN ratio condition can only hold if
+𝑏∈ Ω(
+√
+𝑛×𝑑).
+Proof. Recall that, thanks to Eq.(13) (see proof of Proposition 1),
+the VN ratio condition cannot hold if√︂
+8𝑑
+𝐶2𝑏2× 1
+𝑘𝐹(𝑛,𝑓) > 1⇔ 1
+𝑘𝐹(𝑛,𝑓) > 𝑏×𝐶√
+8𝑑
+,
+with𝐶 =𝜖/
+√︁
+log(1.25/𝛿).
+• If𝐹∈{ Krum, Bulyan} we have𝑘𝐹(𝑛,𝑓) = 1/
+√︁
+2𝜂(𝑛,𝑓) with
+𝜂(𝑛,𝑓) =𝑛−𝑓+ 𝑓(𝑛−𝑓−2)+𝑓 2(𝑛−𝑓−1)
+𝑛−2𝑓−2 . Hence, Eq. (13) holds when-
+ever
+√︁
+2𝜂(𝑛,𝑓) >𝐶×𝑏/
+√
+8𝑑. In particular, since𝜂(𝑛,𝑓) >𝑛+𝑓 2,
+the above holds when
+√︁
+2(𝑛+𝑓 2) >𝐶×𝑏/
+√
+8𝑑⇔
+√︁
+16𝑑(𝑛+𝑓 2) >
+𝐶×𝑏.
+• If𝐹 = Median, we have𝑘𝐹(𝑛,𝑓) = 1/
+√︁
+𝑛−𝑓 , with the addi-
+tional assumption 2𝑓 ≤𝑛− 1. Following the same steps as above,
+Eq. (13) holds whenever
+√︁
+𝑛−𝑓 >𝐶×𝑏/
+√
+8𝑑. Since𝑓 ≤( 𝑛− 1)/2,
+the above inequality holds in particular when
+√︁
+(𝑛+ 1)/2 >𝐶×
+𝑏/
+√
+8𝑑⇔
+√︁
+4𝑑(𝑛+ 1) >𝐶×𝑏.
+• If𝐹 = Meamed, we have𝑘𝐹(𝑛,𝑓) = 1/
+√︁
+10(𝑛−𝑓), also with
+the additional assumption 2𝑓 ≤𝑛− 1. Following the same logic as
+for Median, Eq. (13) holds whenever
+√︁
+40𝑑(𝑛+ 1) >𝐶×𝑏.
+Finally, since(𝜖,𝛿)∈( 0, 1)2,𝐶 is a negligible constant w.r.t𝑏 and𝑑.
+Then, for𝐹∈{ Krum, Bulyan, Median, Meamed}, when computing a
+differentially private gradient step, the VN ratio cannot hold unless
+the batch size𝑏 is in Ω(
+√
+𝑛×𝑑). □
+Proposition 3. Let(𝜖,𝛿)∈( 0, 1)2 be the constant privacy bud-
+get used to inject DP noise to the gradients and 𝐹 ∈{ Trimmed
+Mean, Phocas}. Then, the VN ratio condition can only hold if
+𝑓
+𝑛∈𝑂
+
+𝑏2
+𝑑+𝑏2
+
+.
+Proof. Recall that, thanks to Eq.(13) (see proof of Proposition 1),
+the VN ratio condition cannot hold if√︂
+8𝑑
+𝐶2𝑏2× 1
+𝑘𝐹(𝑛,𝑓) > 1⇔ 1
+𝑘𝐹(𝑛,𝑓) > 𝑏×𝐶√
+8𝑑
+,
+with𝐶 =𝜖/
+√︁
+log(1.25/𝛿).
+• If𝐹 = Trimmed Mean, we have 𝑘𝐹(𝑛,𝑓) =
+√︂
+(𝑛−2𝑓) 2
+2(𝑓+1)(𝑛−𝑓) .
+Then, thanks to Eq. (13) (see proof of Proposition 1), the VN ratio
+condition does not hold whenever
+√︂
+2(𝑓+1)(𝑛−𝑓)
+(𝑛−2𝑓) 2 >𝐶×𝑏/
+√
+8𝑑. In
+particular, since𝑛−𝑓 ≥ 𝑛− 2𝑓 , this inequality holds as soon as
+2𝑓
+(𝑛−2𝑓) >𝐶2×𝑏2/8𝑑. Let us denote by𝜏 = 𝑓
+𝑛 the proportion of
+Byzantine workers in the system. We have that 2𝑓
+𝑛−2𝑓 = 2𝜏
+1−2𝜏 . Then
+the above inequality can be rewritten as16𝜏𝑑 >(1−2𝜏)𝐶2𝑏2. This
+is equivalent to saying that𝜏 > 𝐶 2𝑏2
+16𝑑+2𝐶 2𝑏2 .
+• If𝐹 = Phocas, we have𝑘𝐹(𝑛,𝑓) =
+√︂
+4+ (𝑛−2𝑓) 2
+12(𝑓+1)(𝑛−𝑓) . Then,
+following the same logic as forTrimmed Mean, Eq.(13) hold when-
+ever𝜏 > 𝐶 2𝑏2
+64𝑑+2𝐶 2𝑏2.
+Finally, since(𝜖,𝛿)∈( 0, 1)2,𝐶 is a negligible constant w.r.t𝑏
+and𝑑. Then, for𝐹∈{ Trimmed Mean, Phocas}, when computing a
+differentially private gradient step, the VN ratio cannot hold unless
+𝑓
+𝑛 is in𝑂
+
+𝑏2
+𝑑+𝑏2
+
+. □
+B Detailed Proof of the Upper Bound in
+Theorem 1
+We let𝐹𝑡≜𝐹
+
+𝑜(1)
+𝑡 ,...,𝑜 (𝑛)
+𝑡
+
+. Recall, from Section 2.3, that in each
+iteration𝑡 if worker𝑊𝑖 is honest then
+𝑜(𝑖)
+𝑡 =ℎ(𝜉(𝑖)
+𝑡 )+ 𝒚 (𝒊)
+𝒕 with 𝒚 (𝒊)
+𝒕 ∼N
+
+0,𝐼𝑑×𝑠2
+
+whereℎ(𝜉(𝑖)
+𝑡 )∼ 𝐺𝑡 such that E𝜉𝑡[𝐺𝑡] =∇𝑄(𝑤𝑡) and
+E𝜉𝑡
+
+∥𝐺𝑡− E𝑡𝐺𝑡∥2
+= E𝜉𝑡
+
+©­
+«
+1
+𝑏
+𝑏∑︁
+𝑗=1
+∇𝑄
+
+𝑤𝑡,𝑥(𝑖,𝑗)
+𝑡
+
+−∇𝑄(𝑤𝑡)ª®
+¬
+2
+.
+Therefore,𝑜(𝑖)
+𝑡 ∼𝑃𝑡 for an honest worker𝑊𝑖 such that E𝜉𝑡[𝑃𝑡] =
+∇𝑄(𝑤𝑡), and
+E𝜉𝑡
+
+∥𝑃𝑡− E𝑃𝑡∥2
+=
+E𝜉𝑡
+
+©­
+«
+1
+𝑏
+𝑏∑︁
+𝑗=1
+∇𝑄
+
+𝑤𝑡,𝑥(𝑖,𝑗)
+𝑡
+
++ 𝒚 (𝒊)
+𝒕 −∇𝑄(𝑤𝑡)ª®
+¬
+2
+. (14)
+As the square function(·) 2 is convex, from (14) and Assumption 4,
+we obtain that
+E𝜉𝑡
+h𝑃𝑡− E𝜉𝑡 𝑃𝑡
+2i
+≤ 𝜎 2
+𝑏 +𝑑𝑠 2. (15)
+Recall that E𝜉𝑡[𝑃𝑡] =∇𝑄(𝑤𝑡), and by Assumption 1,∥∇𝑄(𝑤𝑡)∥≤
+𝐺𝑚𝑎𝑥 . Thus, from (15), we obtain that E𝜉𝑡
+
+∥𝑃𝑡∥2
+≤ 𝜎 2
+𝑏 +𝑑𝑠 2+
+𝐺 2max, and
+E𝜉𝑡[∥𝑃𝑡∥]≤
+√︂
+𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2𝑚𝑎𝑥. (16)
+Now, recall from the definition of(𝛼, 𝑓)-Byzantine resilience in
+Section 2.2, for each𝑡∈{ 1,...,𝑇 },
+⟨E𝜉𝑡[𝐹𝑡],∇𝑄(𝑤𝑡)⟩≥( 1− sin𝛼)∥∇𝑄(𝑤𝑡)∥2 > 0. (17)
+Moreover, there exists a positive real-value 𝑐 such that for each
+𝑡∈{ 1,...,𝑇 },
+E𝜉𝑡
+
+∥𝐹𝑡∥2
+≤𝑐 max
+
+E𝜉𝑡
+
+∥𝑃𝑡∥2
+, E𝜉𝑡[∥𝑃𝑡∥]
+	
+. (18)
+It is safe to assume that 𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2𝑚𝑎𝑥≥ 1. Thus, substituting
+from (16) in (18), we obtain that, for each𝑡∈{ 1,...,𝑇 },
+E𝜉𝑡
+
+∥𝐹𝑡∥2
+≤𝑐
+𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+. (19)
+From (9), and Assumption 3, we obtain that, for all𝑡,
+𝑄(𝑤𝑡+1)≤ 𝑄(𝑤𝑡)− 𝛾𝑡⟨∇𝑄(𝑤𝑡), 𝐹𝑡⟩+ 1
+2𝜇𝛾 2
+𝑡 ∥𝐹𝑡∥2.
+Note that E𝜉𝑡[𝑄(𝑤𝑡)] =𝑄(𝑤𝑡). Upon taking expectation E𝜉𝑡 on
+both sides above, we obtain that, for all𝑡,
+E𝜉𝑡[𝑄(𝑤𝑡+1)]≤𝑄(𝑤𝑡)− 𝛾𝑡
+
+∇𝑄(𝑤𝑡), E𝜉𝑡[𝐹𝑡]
+
++ 1
+2𝜇𝛾 2
+𝑡 E𝜉𝑡
+
+∥𝐹𝑡∥2
+. (20)
+Substituting from (17) in (20) implies that, for𝑡 = 1,...,𝑇 ,
+E𝜉𝑡[𝑄(𝑤𝑡+1)]≤𝑄(𝑤𝑡)− 𝛾𝑡(1− sin𝛼)∥∇𝑄(𝑤𝑡)∥2
++ 1
+2𝜇𝛾 2
+𝑡 E𝜉𝑡∥𝐹𝑡∥2. (21)
+From Assumption 2,∥∇𝑄(𝑤𝑡)∥2≥ 2𝜆(𝑄(𝑤𝑡)− 𝑄∗). Substituting
+this above implies that
+E𝜉𝑡[𝑄(𝑤𝑡+1)]−𝑄∗≤(1− 2𝜆(1− sin𝛼)𝛾𝑡)  𝑄(𝑤𝑡)− 𝑄∗
++ 1
+2𝜇𝛾 2
+𝑡 E𝜉𝑡
+
+∥𝐹𝑡∥2
+, for𝑡 = 1,...,𝑇. (22)
+Suppose that𝑡 > 1. Taking expectation E𝜉1... E𝜉𝑡−1 on both sides
+in (22), we obtain that
+E𝑡[𝑄(𝑤𝑡+1)]−𝑄∗≤(1− 2𝜆(1− sin𝛼)𝛾𝑡)  E𝑡−1[𝑄(𝑤𝑡)]−𝑄∗
++ 1
+2𝜇𝛾 2
+𝑡 E𝑡
+
+∥𝐹𝑡∥2
+, for𝑡 = 2,...,𝑇. (23)
+Substituting from (19) in (23), we obtain that
+E𝑡[𝑄(𝑤𝑡+1)]−𝑄∗≤(1− 2𝜆(1− sin𝛼)𝛾𝑡)  E𝑡−1[𝑄(𝑤𝑡)]−𝑄∗
++ 1
+2𝜇𝑐
+𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+𝛾 2
+𝑡, for𝑡 = 2,...,𝑇.
+Substituting𝛾𝑡 = 1
+𝜆(1−sin𝛼)𝑡 above we obtain that
+E𝑡[𝑄(𝑤𝑡+1)]−𝑄∗≤
+
+1− 2
+𝑡
+  E𝑡−1[𝑄(𝑤𝑡)]−𝑄∗
++ 1
+𝑡 2
+ 𝜇𝑐
+2𝜆2(1− sin𝛼)2
+ 𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+, for𝑡 = 2,...,𝑇.
+Finally, using induction it is easy to show that
+E𝑇[𝑄(𝑤𝑇+1)]−𝑄∗≤
+1
+𝑇+ 1
+ 𝜇𝑐
+2𝜆2(1− sin𝛼)2
+ 𝜎 2
+𝑏 +𝑑𝑠 2+𝐺 2
+max
+
+(24)
+Therefore, E𝑡[𝑄(𝑤𝑇+1)]−𝑄∗∈𝑂
+
+𝑑𝑠 2
+𝑇
+
+. Recall, from Section 2.3,
+that𝑠 = 2𝐺𝑚𝑎𝑥
+√
+2 log(1.25/𝛿)
+𝑏𝜖 . Hence,
+E𝑇[𝑄(𝑤𝑇+1)]−𝑄∗∈𝑂
+𝑑 log(1/𝛿)
+𝑇𝑏 2𝜖2
+
+.
+References
+[1] [n.d.]. Source code associated with this submission. https://github.com/LPD-
+EPFL/DifferentialByzantine
+[2] Martin Abadi, Andy Chu, Ian Goodfellow, H Brendan McMahan, Ilya Mironov,
+Kunal Talwar, and Li Zhang. 2016. Deep learning with differential privacy. In
+Proceedings of the 2016 ACM SIGSAC Conference on Computer and Communications
+Security. 308–318.
+[3] Moran Baruch, Gilad Baruch, and Yoav Goldberg. 2019. A Little Is Enough:
+Circumventing Defenses For Distributed Learning. In Advances in Neural Infor-
+mation Processing Systems 32: Annual Conference on Neural Information Processing
+Systems 2019, 8-14 December 2019, Long Beach, CA, USA .
+[4] Raef Bassily, Adam Smith, and Abhradeep Thakurta. 2014. Differentially Pri-
+vate Empirical Risk Minimization: Efficient Algorithms and Tight Error Bounds.
+arXiv:1405.7085 [cs.LG]
+[5] Peva Blanchard, El Mahdi El Mhamdi, Rachid Guerraoui, and Julien Stainer. 2017.
+Machine Learning with Adversaries: Byzantine Tolerant Gradient Descent. In
+Advances in Neural Information Processing Systems 30 , I. Guyon, U. V. Luxburg,
+S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.). Curran
+Associates, Inc., 119–129. http://papers.nips.cc/paper/6617-machine-learning-
+with-adversaries-byzantine-tolerant-gradient-descent.pdf
+[6] Léon Bottou. 1999. On-line Learning and Stochastic Approximations . Cambridge
+University Press, 9–42. https://doi.org/10.1017/CBO9780511569920.003
+[7] Léon Bottou. 2010. Large-Scale Machine Learning with Stochastic Gradient
+Descent. In Proceedings of COMPSTAT’2010, Yves Lechevallier and Gilbert Saporta
+(Eds.). Physica-Verlag HD, Heidelberg, 177–186.
+[8] Léon Bottou, Frank E Curtis, and Jorge Nocedal. 2018. Optimization methods for
+large-scale machine learning. Siam Review 60, 2 (2018), 223–311.
+[9] Lingjiao Chen, Hongyi Wang, Zachary B. Charles, and Dimitris S. Papailiopoulos.
+2018. DRACO: Byzantine-resilient Distributed Training via Redundant Gradients.
+In Proceedings of the 35th International Conference on Machine Learning, ICML 2018,
+Stockholmsmässan, Stockholm, Sweden, July 10-15, 2018 (Proceedings of Machine
+Learning Research, Vol. 80) , Jennifer G. Dy and Andreas Krause (Eds.). PMLR,
+902–911. http://proceedings.mlr.press/v80/chen18l.html
+[10] X. Chen, J. Ji, C. Luo, W. Liao, and P. Li. 2018. When Machine Learning Meets
+Blockchain: A Decentralized, Privacy-preserving and Secure Design. In2018 IEEE
+International Conference on Big Data (Big Data) . 1178–1187.
+[11] Georgios Damaskinos, Celestine Mendler-Dünner, Rachid Guerraoui, Nikolaos
+Papandreou, and Thomas Parnell. 2020. Differentially Private Stochastic Coordi-
+nate Descent. arXiv:2006.07272 [cs.LG]
+[12] J. Deng, W. Dong, R. Socher, L.-J. Li, K. Li, and L. Fei-Fei. 2009. ImageNet: A
+Large-Scale Hierarchical Image Database. In CVPR09.
+[13] Cynthia Dwork. 2006. Differential Privacy. In Automata, Languages and Pro-
+gramming, Michele Bugliesi, Bart Preneel, Vladimiro Sassone, and Ingo Wegener
+(Eds.). Springer Berlin Heidelberg, Berlin, Heidelberg, 1–12.
+[14] Cynthia Dwork, Aaron Roth, et al. 2014. The algorithmic foundations of differen-
+tial privacy. Foundations and Trends in Theoretical Computer Science 9, 3-4 (2014),
+211–407.
+[15] El-Mahdi El-Mhamdi, Rachid Guerraoui, Arsany Guirguis, Lê Nguyên Hoang,
+and Sébastien Rouault. 2020. Genuinely Distributed Byzantine Machine Learning.
+arXiv:1905.03853 [cs.DC]
+[16] El-Mahdi El-Mhamdi, Rachid Guerraoui, and Sébastien Rouault. 2021. Distributed
+Momentum for Byzantine-resilient Stochastic Gradient Descent. In 9th Interna-
+tional Conference on Learning Representations, ICLR 2021, Vienna, Austria, May
+4–8, 2021. OpenReview.net. https://openreview.net/forum?id=H8UHdhWG6A3
+[17] Lie He, Sai Praneeth Karimireddy, and Martin Jaggi. 2020. Secure Byzantine-
+Robust Machine Learning. arXiv:2006.04747 [cs.LG]
+[18] K. R. Jayaram, Archit Verma, Ashish Verma, Gegi Thomas, and Colin Sutcher-
+Shepard. 2020. MYSTIKO : : Cloud-Mediated, Private, Federated Gradient Descent.
+arXiv:2012.00740 [cs.CR]
+[19] Jakub Konečný, H. Brendan McMahan, Felix X. Yu, Peter Richtarik,
+Ananda Theertha Suresh, and Dave Bacon. 2016. Federated Learning: Strategies
+for Improving Communication Efficiency. In NIPS Workshop on Private Multi-
+Party Machine Learning. https://arxiv.org/abs/1610.05492
+[20] Alina Kuznetsova, Hassan Rom, Neil Alldrin, Jasper Uijlings, Ivan Krasin, Jordi
+Pont-Tuset, Shahab Kamali, Stefan Popov, Matteo Malloci, Alexander Kolesnikov,
+and et al. 2020. The Open Images Dataset V4. International Journal of Computer
+Vision 128, 7 (Mar 2020), 1956–1981. https://doi.org/10.1007/s11263-020-01316-z
+[21] Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haffner. 1998. Gradient-
+based learning applied to document recognition. Proc. IEEE 86, 11 (1998), 2278–
+2324.
+[22] Mu Li, David G. Andersen, Jun Woo Park, Alexander J. Smola, Amr Ahmed, Vanja
+Josifovski, James Long, Eugene J. Shekita, and Bor-Yiing Su. 2014. Scaling Dis-
+tributed Machine Learning with the Parameter Server. In Proceedings of the 11th
+USENIX Conference on Operating Systems Design and Implementation (Broomfield,
+CO) (OSDI’14). USENIX Association, USA, 583–598.
+[23] El Mahdi El Mhamdi, Rachid Guerraoui, and Sébastien Rouault. 2018. The Hidden
+Vulnerability of Distributed Learning in Byzantium. arXiv:1802.07927 [stat.ML]
+[24] M. Naseri, J. Hayes, and Emiliano De Cristofaro. 2020. Toward Robustness and
+Privacy in Federated Learning: Experimenting with Local and Central Differential
+Privacy. ArXiv abs/2009.03561 (2020).
+[25] Nicolas Papernot, Martín Abadi, Úlfar Erlingsson, Ian Goodfellow, and Kunal
+Talwar. 2017. Semi-supervised Knowledge Transfer for Deep Learning from
+Private Training Data. arXiv:1610.05755 [stat.ML]
+[26] Pitch Patarasuk and Xin Yuan. 2009. Bandwidth optimal all-reduce algorithms
+for clusters of workstations. J. Parallel and Distrib. Comput. 69, 2 (2009), 117 –
+124. https://doi.org/10.1016/j.jpdc.2008.09.002
+[27] Boris Polyak and Anatoli Juditsky. 1992. Acceleration of Stochastic Approxi-
+mation by Averaging. SIAM Journal on Control and Optimization 30 (07 1992),
+838–855. https://doi.org/10.1137/0330046
+[28] C Radhakrishna Rao. 1992. Information and the accuracy attainable in the
+estimation of statistical parameters. In Breakthroughs in statistics . Springer,
+235–247.
+[29] Ahmed Salem, Yang Zhang, Mathias Humbert, Pascal Berrang, Mario Fritz,
+and Michael Backes. 2018. ML-Leaks: Model and Data Independent
+Membership Inference Attacks and Defenses on Machine Learning Models.
+arXiv:1806.01246 [cs.CR]
+[30] R. Shokri and V. Shmatikov. 2015. Privacy-preserving deep learning. In 2015 53rd
+Annual Allerton Conference on Communication, Control, and Computing (Allerton) .
+909–910. https://doi.org/10.1109/ALLERTON.2015.7447103
+[31] Reza Shokri, Marco Stronati, and Vitaly Shmatikov. 2016. Membership Infer-
+ence Attacks against Machine Learning Models. CoRR abs/1610.05820 (2016).
+arXiv:1610.05820 http://arxiv.org/abs/1610.05820
+[32] Patrice Y Simard, David Steinkraus, John C Platt, et al. 2003. Best practices for
+convolutional neural networks applied to visual document analysis.. In Icdar,
+Vol. 3. Citeseer.
+[33] Jinhyun So, Basak Guler, and A. Salman Avestimehr. 2020. Byzantine-Resilient
+Secure Federated Learning. arXiv:2007.11115 [cs.CR]
+[34] S. Song, K. Chaudhuri, and A. D. Sarwate. 2013. Stochastic gradient descent
+with differentially private updates. In 2013 IEEE Global Conference on Signal and
+Information Processing. 245–248. https://doi.org/10.1109/GlobalSIP.2013.6736861
+[35] Fengyi Tang, Wei Wu, Jian Liu, and Ming Xian. 2019. Privacy-Preserving Dis-
+tributed Deep Learning via Homomorphic Re-Encryption. Electronics 8 (04 2019),
+411. https://doi.org/10.3390/electronics8040411
+[36] Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta. 2018. Generalized Byzantine-
+tolerant SGD. arXiv:1802.10116 [cs.DC]
+[37] Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta. 2018. Phocas: dimensional
+Byzantine-resilient stochastic gradient descent. arXiv:1805.09682 [cs.DC]
+[38] Cong Xie, Oluwasanmi Koyejo, and Indranil Gupta. 2019. Fall of Empires: Break-
+ing Byzantine-tolerant SGD by Inner Product Manipulation. In Proceedings of the
+Thirty-Fifth Conference on Uncertainty in Artificial Intelligence, UAI 2019, Tel A viv,
+Israel, July 22-25, 2019 . 83.
+[39] Cong Xie, Sanmi Koyejo, and Indranil Gupta. 2019. Zeno: Distributed Stochastic
+Gradient Descent with Suspicion-based Fault-tolerance. In Proceedings of the
+36th International Conference on Machine Learning, ICML 2019, 9-15 June 2019,
+Long Beach, California, USA (Proceedings of Machine Learning Research, Vol. 97) ,
+Kamalika Chaudhuri and Ruslan Salakhutdinov (Eds.). PMLR, 6893–6901. http:
+//proceedings.mlr.press/v97/xie19b.html
+[40] Dong Yin, Yudong Chen, Kannan Ramchandran, and Peter Bartlett. 2018.
+Byzantine-Robust Distributed Learning: Towards Optimal Statistical Rates.
+arXiv:1803.01498 [cs.LG]
+[41] Sergey Zagoruyko and Nikos Komodakis. 2016. Wide Residual Networks. CoRR
+abs/1605.07146 (2016). arXiv:1605.07146 http://arxiv.org/abs/1605.07146
+[42] Jingzhao Zhang, Tianxing He, Suvrit Sra, and Ali Jadbabaie. 2020. Why gra-
+dient clipping accelerates training: A theoretical justification for adaptivity.
+arXiv:1905.11881 [math.OC]
+[43] Ligeng Zhu, Zhijian Liu, and Song Han. 2019. Deep Leakage from Gradients. In
+Advances in Neural Information Processing Systems 32 , H. Wallach, H. Larochelle,
+A. Beygelzimer, F. d Alché-Buc, E. Fox, and R. Garnett (Eds.). Curran Asso-
+ciates, Inc., 14774–14784. http://papers.nips.cc/paper/9617-deep-leakage-from-
+gradients.pdf
+[44] Úlfar Erlingsson, Vitaly Feldman, Ilya Mironov, Ananth Raghunathan, Kunal
+Talwar, and Abhradeep Thakurta. 2020. Amplification by Shuffling: From Local
+to Central Differential Privacy via Anonymity. arXiv:1811.12469 [cs.LG]

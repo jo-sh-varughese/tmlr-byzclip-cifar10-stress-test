@@ -1,0 +1,16 @@
+venv/
+data/
+aaai27_authorkit/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+review_followups_run.log
+external_baselines_run.log
+paper/*.aux
+paper/*.log
+paper/*.bbl
+paper/*.blg
+paper/*.out
+paper/*.synctex.gz
+paper/main.pdf

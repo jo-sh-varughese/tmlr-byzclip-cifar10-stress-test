@@ -1,0 +1,180 @@
+\makeatletter
+\@ifundefined{isChecklistMainFile}{
+  % We are compiling a standalone document
+  \newif\ifreproStandalone
+  \reproStandalonetrue
+}{
+  % We are being \input into the main paper
+  \newif\ifreproStandalone
+  \reproStandalonefalse
+}
+\makeatother
+
+\ifreproStandalone
+\documentclass[letterpaper]{article}
+\usepackage[submission]{aaai2027}
+\setlength{\pdfpagewidth}{8.5in}
+\setlength{\pdfpageheight}{11in}
+\frenchspacing
+
+\begin{document}
+\fi
+\setlength{\leftmargini}{20pt}
+\makeatletter\def\@listi{\leftmargin\leftmargini \topsep .5em \parsep .5em \itemsep .5em}
+\def\@listii{\leftmargin\leftmarginii \labelwidth\leftmarginii \advance\labelwidth-\labelsep \topsep .4em \parsep .4em \itemsep .4em}
+\def\@listiii{\leftmargin\leftmarginiii \labelwidth\leftmarginiii \advance\labelwidth-\labelsep \topsep .4em \parsep .4em \itemsep .4em}\makeatother
+
+\setcounter{secnumdepth}{0}
+\renewcommand\thesubsection{\arabic{subsection}}
+\renewcommand\labelenumi{\thesubsection.\arabic{enumi}}
+
+\newcounter{checksubsection}
+\newcounter{checkitem}[checksubsection]
+
+\newcommand{\checksubsection}[1]{%
+  \refstepcounter{checksubsection}%
+  \paragraph{\arabic{checksubsection}. #1}%
+  \setcounter{checkitem}{0}%
+}
+
+\newcommand{\checkitem}{%
+  \refstepcounter{checkitem}%
+  \item[\arabic{checksubsection}.\arabic{checkitem}.]%
+}
+\newcommand{\question}[2]{\normalcolor\checkitem #1 #2 \color{blue}}
+\newcommand{\ifyespoints}[1]{\makebox[0pt][l]{\hspace{-15pt}\normalcolor #1}}
+
+\section*{Reproducibility Checklist}
+
+\vspace{1em}
+\hrule
+\vspace{1em}
+
+% The questions start here
+
+\checksubsection{General Paper Structure}
+\begin{itemize}
+
+\question{Includes a conceptual outline and/or pseudocode description of AI methods introduced}{(yes/partial/no/NA)}
+NA -- this paper introduces no new AI method; Section 3 (Method) gives a full equation-level description of the existing Byz-Clip21-SGD2M algorithm under test, for clarity.
+
+\question{Clearly delineates statements that are opinions, hypothesis, and speculation from objective facts and results}{(yes/no)}
+yes
+
+\question{Provides well-marked pedagogical references for less-familiar readers to gain background necessary to replicate the paper}{(yes/no)}
+no
+
+\end{itemize}
+\checksubsection{Theoretical Contributions}
+\begin{itemize}
+
+\question{Does this paper make theoretical contributions?}{(yes/no)}
+no
+
+	\ifyespoints{\vspace{1.2em}If yes, please address the following points:}
+        \begin{itemize}
+
+	\question{All assumptions and restrictions are stated clearly and formally}{(yes/partial/no)}
+	NA
+
+	\question{All novel claims are stated formally (e.g., in theorem statements)}{(yes/partial/no)}
+	NA
+
+	\question{Proofs of all novel claims are included}{(yes/partial/no)}
+	NA
+
+	\question{Proof sketches or intuitions are given for complex and/or novel results}{(yes/partial/no)}
+	NA
+
+	\question{Appropriate citations to theoretical tools used are given}{(yes/partial/no)}
+	yes
+
+	\question{All theoretical claims are demonstrated empirically to hold}{(yes/partial/no/NA)}
+	NA
+
+	\question{All experimental code used to eliminate or disprove claims is included}{(yes/no/NA)}
+	NA
+
+	\end{itemize}
+\end{itemize}
+
+\checksubsection{Dataset Usage}
+\begin{itemize}
+
+\question{Does this paper rely on one or more datasets?}{(yes/no)}
+yes
+
+\ifyespoints{If yes, please address the following points:}
+\begin{itemize}
+
+	\question{A motivation is given for why the experiments are conducted on the selected datasets}{(yes/partial/no/NA)}
+	yes -- MNIST replicates the source paper's own validation dataset; CIFAR-10 is added specifically to test H1 (whether the source paper's sub-Gaussian-noise premise and empirical robustness generalize past MNIST scale).
+
+	\question{All novel datasets introduced in this paper are included in a data appendix}{(yes/partial/no/NA)}
+	NA -- no novel datasets are introduced.
+
+	\question{All novel datasets introduced in this paper will be made publicly available upon publication of the paper with a license that allows free usage for research purposes}{(yes/partial/no/NA)}
+	NA
+
+	\question{All datasets drawn from the existing literature (potentially including authors' own previously published work) are accompanied by appropriate citations}{(yes/no/NA)}
+	yes
+
+	\question{All datasets drawn from the existing literature (potentially including authors' own previously published work) are publicly available}{(yes/partial/no/NA)}
+	yes
+
+	\question{All datasets that are not publicly available are described in detail, with explanation why publicly available alternatives are not scientifically satisficing}{(yes/partial/no/NA)}
+	NA
+
+\end{itemize}
+\end{itemize}
+
+\checksubsection{Computational Experiments}
+\begin{itemize}
+
+\question{Does this paper include computational experiments?}{(yes/no)}
+yes
+
+\ifyespoints{If yes, please address the following points:}
+\begin{itemize}
+
+	\question{This paper states the number and range of values tried per (hyper-) parameter during development of the paper, along with the criterion used for selecting the final parameter setting}{(yes/partial/no/NA)}
+	yes -- every hyperparameter-probe stage reports every value tried, including configurations that did not work, and states the selection criterion (highest clean-training accuracy within the fixed round budget).
+
+	\question{Any code required for pre-processing data is included in the appendix}{(yes/partial/no)}
+	no -- released via the accompanying code repository rather than a paper appendix (see code/data availability statement).
+
+	\question{All source code required for conducting and analyzing the experiments is included in a code appendix}{(yes/partial/no)}
+	no -- released via the accompanying code repository rather than a paper appendix.
+
+	\question{All source code required for conducting and analyzing the experiments will be made publicly available upon publication of the paper with a license that allows free usage for research purposes}{(yes/partial/no)}
+	[TODO: confirm with authors before submission -- not yet decided in this pilot.]
+
+	\question{All source code implementing new methods have comments detailing the implementation, with references to the paper where each step comes from}{(yes/partial/no)}
+	partial -- the core algorithm implementation (src/byz\_clip21\_sgd2m.py) is commented line-by-line against the source paper's pseudocode; auxiliary scripts are less exhaustively annotated.
+
+	\question{If an algorithm depends on randomness, then the method used for setting seeds is described in a way sufficient to allow replication of results}{(yes/partial/no/NA)}
+	yes -- every run fixes \texttt{torch.manual\_seed} and \texttt{np.random.seed} to an explicit integer seed recorded in that run's output JSON and in the paper's Reproducibility section seed list.
+
+	\question{This paper specifies the computing infrastructure used for running experiments (hardware and software), including GPU/CPU models; amount of memory; operating system; names and versions of relevant software libraries and frameworks}{(yes/partial/no)}
+	yes -- CPU-only (no GPU/CUDA available), 8 logical cores, Windows, Python 3.11.9, PyTorch 2.13.0+cpu, torchvision 0.28.0+cpu, NumPy 2.4.6, SciPy 1.17.1.
+
+	\question{This paper formally describes evaluation metrics used and explains the motivation for choosing these metrics}{(yes/partial/no)}
+	yes -- final test accuracy for training runs; Hill tail-index alpha, excess kurtosis, KS statistic vs.\ N(0,1), and Gaussian-/Student-t-referenced exceedance ratios for the sub-Gaussianity measurements, each motivated as a distinct, complementary probe of tail heaviness.
+
+	\question{This paper states the number of algorithm runs used to compute each reported result}{(yes/no)}
+	yes -- this is a first-class design requirement of this project; every table states its exact seed count, and under-powered tables are explicitly flagged rather than silently presented as if fully powered.
+
+	\question{Analysis of experiments goes beyond single-dimensional summaries of performance (e.g., average; median) to include measures of variation, confidence, or other distributional information}{(yes/no)}
+	yes -- MNIST tables (n=10 or n=5), the CIFAR-10 tau-search confirm phase (n=5), and CIFAR-10's C1/C2/C3 main-sweep tables (n=10/n=5/n=10, brought up from the original pilot's n=2--3 in a follow-up compute pass) are all reported with std, and min/max where tabulated (see Limitations for the one remaining n=1 case, the CIFAR-10 Stage-A hp-probe).
+
+	\question{The significance of any improvement or decrease in performance is judged using appropriate statistical tests (e.g., Wilcoxon signed-rank)}{(yes/partial/no)}
+	partial -- paired Wilcoxon signed-rank tests (scipy.stats.wilcoxon, matched by seed) are now reported for the paper's main comparative claims, in a dedicated significance-testing table in the Results section; no correction for multiple comparisons is applied across the 11 tests run, which is a disclosed limitation (see Limitations), not an oversight.
+
+	\question{This paper lists all final (hyper-)parameters used for each model/algorithm in the paper's experiments}{(yes/partial/no/NA)}
+	yes -- every run's full configuration (including seed, $\gamma$, $\tau$, $\beta$, $\hat\beta$, $\varepsilon$, RAgg choice, ablation flag) is saved verbatim in that run's output JSON under \texttt{results/}, and every table in the paper traces to specific files.
+
+\end{itemize}
+\end{itemize}
+\ifreproStandalone
+\end{document}
+\fi

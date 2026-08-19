@@ -43,9 +43,33 @@ not robustness-specific; a dedicated DP-aware search over the clipping
 threshold $\tau$, spanning the source paper's own privacy-budget grid, fails
 to recover non-degenerate CIFAR-10 accuracy even as DP noise is driven toward
 zero. This rules out both ``DP noise alone explains the gap'' and ``the
-fixed-$\tau$ protocol was miscalibrated''; the evidence instead points to
-CIFAR-10's own clean-training convergence difficulty, plausibly linked to its
-heavier tail, as the dominant factor. A seed scale-up (CIFAR-10 sweep to
+fixed-$\tau$ protocol was miscalibrated.'' A reviewer-requested control
+sweep -- plain FedAvg with single-momentum SGD, ordinary per-client clipping,
+and unweighted averaging, i.e.\ no robust aggregator, no Byzantine workers,
+and no DP noise -- reaches $29$--$41\%$ CIFAR-10 accuracy at the identical
+architecture, heterogeneity grid, and round budget where Byz-Clip21-SGD2M's
+own pipeline (at $n_{\text{byz}}{=}0$, no DP) reaches only $10$--$21\%$; the
+evidence therefore points to Byz-Clip21-SGD2M's own double-momentum and
+trimmed-mean mechanics -- not CIFAR-10's intrinsic clean-training difficulty
+alone -- as a substantial, and previously unattributed, contributor to the
+CIFAR-10 gap, with the dataset's heavier measured tail (H1) a plausible
+reason that mechanism degrades more on CIFAR-10 than on MNIST. A centralized,
+non-federated, \emph{unclipped} sanity check on the identical architecture
+rules out an implementation bug: at this paper's headline learning rate it
+diverges to chance without clipping, but at a smaller learning rate it
+reaches $65.2\%$, in the expected range for a small CNN on CIFAR-10;
+since every federated condition in this paper -- including the vanilla
+control -- has clipping active and does not diverge at that same learning
+rate, clipping rather than a different $\gamma$ regime explains the
+difference, so this does not reopen the mechanism-attribution above. A short
+extended-horizon check ($T{=}700$, up from the main sweep's $T{=}100$--$300$,
+$n{=}3$ seeds, $\alpha{=}0.5$) finds accuracy rises only modestly and
+noisily -- $n_{\text{byz}}{=}0$ mean final accuracy $0.200$ vs.\ $0.160$ at
+$T{=}100$ (matched seeds), oscillating between $10\%$ and $24\%$ round-to-round
+rather than climbing smoothly -- so some residual compute-budget contribution
+on top of the algorithmic effect above cannot be ruled out, but $7\times$ the
+rounds does not come close to closing the gap to either the vanilla control or
+MNIST (Limitations). A seed scale-up (CIFAR-10 sweep to
 $n{=}10$/cell, ablation to $n{=}10$/arm) with paired Wilcoxon testing confirms
 this: no CIFAR-10 condition differs significantly from any other, and the
 ablation's recovery to CIFAR-10's clean ceiling is statistically
@@ -66,10 +90,14 @@ independently-tuned comparison this gap called for (30-point $(\gamma,\tau)$
 grid per baseline, matching the source paper's own tuning range): it erases
 the MNIST advantage seen under shared hyperparameters entirely (all 12
 comparisons now $p\geq0.06$) without producing a Byz-Clip21-SGD2M advantage
-either, since our tuning remains a simplified, single-condition probe rather
-than the source paper's per-$\varepsilon$, DP-aware protocol -- so whether
-Byz-Clip21-SGD2M has a genuine MNIST edge under equally careful tuning stays
-open. On CIFAR-10, all three algorithms are statistically indistinguishable
+either. We read this conclusively as a hyperparameter-\emph{transferability}
+finding rather than an incomplete head-to-head: a $(\gamma,\tau)$ pair selected
+on an easy, DP-free, attack-free probe condition does not reliably carry over
+to the full DP+Byzantine protocol for any of the three algorithms, so
+single-condition tuning is not a valid stand-in for the source paper's own
+per-$\varepsilon$, DP-aware grid in this joint regime -- a caution about
+tuning transferability under joint DP-Byzantine noise, not a gap in our
+replication. On CIFAR-10, all three algorithms are statistically indistinguishable
 and collapse to chance together, a more direct finding independent of any
 tuning caveat: the CIFAR-10 gap is not specific to Byz-Clip21-SGD2M. We
 report every known gap in our replication honestly, including a corrected
@@ -119,8 +147,16 @@ more surprising than either of the hypotheses it was designed to distinguish:
 an extensive $\tau$ search does not recover useful CIFAR-10 accuracy, so the
 gap is not simply a miscalibrated clipping threshold, but $\tau$-tuning does
 produce a small, real accuracy improvement at low privacy budgets, so DP noise
-is not irrelevant either. Section~\ref{sec:results} gives the full evidence
-for both. We additionally implement and evaluate the source paper's two
+is not irrelevant either. A reviewer-requested control sweep further refines
+H2's answer: a completely standard FedAvg+SGD+clip baseline, with no robust
+aggregator, no Byzantine workers, and no DP noise, reaches roughly $2$--$4\times$
+Byz-Clip21-SGD2M's own CIFAR-10 accuracy at matched architecture, heterogeneity,
+and round budget (Section~\ref{sec:results}), so the CIFAR-10 gap is better
+attributed to Byz-Clip21-SGD2M's own double-momentum/robust-aggregation
+mechanics than to CIFAR-10 being intrinsically untrainable at this scale --
+though the dataset's heavier measured tail (H1) remains a plausible reason
+that mechanism degrades specifically on CIFAR-10. Section~\ref{sec:results}
+gives the full evidence for both. We additionally implement and evaluate the source paper's two
 external baselines, Safe-DSHB and Byz-Clip-SGD, directly from its appendix
 pseudocode, closing a gap left open in earlier drafts of this project; the
 result is a third, less comfortable finding (Section~\ref{sec:baselines}):
@@ -132,8 +168,12 @@ three algorithms are indistinguishable on CIFAR-10, a finding that does not
 depend on the tuning caveat. We have since independently tuned each
 baseline's own $(\gamma,\tau)$ and re-run the MNIST comparison at $n{=}10$;
 this erases the exploratory advantage without producing one for
-Byz-Clip21-SGD2M, leaving the underlying question open pending a tuning
-protocol as careful as the source paper's own (Section~\ref{sec:baselines}).
+Byz-Clip21-SGD2M, which we read as an empirical caution about
+hyperparameter-transfer under joint DP-Byzantine noise -- not as an
+inconclusive replication -- since it is consistent with the same
+transfer-failure pattern this paper documents independently for
+Byz-Clip21-SGD2M itself (H2, Section~\ref{sec:results})
+(Section~\ref{sec:baselines}).
 
 \section{Related Work}
 
@@ -418,6 +458,26 @@ $\gamma\in\{0.1,0.05,0.02,0.01\}$ at the extended $T{=}300$ budget
   (Section~\ref{sec:limitations}).
 \end{enumerate}
 
+\paragraph{Round-budget roadmap.} This paper reports results at five
+different round budgets $T$, each serving a distinct purpose; we summarize
+the mapping here since no single number is representative of ``the'' round
+budget used. $T{=}60$ is the Stage-A hyperparameter probe (an easy, DP-free,
+attack-free condition used only to select $(\gamma,\tau)$ candidates, not to
+report accuracy). $T{=}80$ is the headline budget for essentially all main
+comparative tables in this paper (MNIST and CIFAR-10 main sweeps, ablations,
+baseline comparisons, $\tau$-search) -- this is the number a reader should
+default to unless a claim explicitly says otherwise. $T{=}100$ is used only
+by the bias-floor sweep (Section~\ref{sec:results}) and its matched
+vanilla-control counterpart (Section~\ref{sec:results}), a self-contained
+study with its own round budget chosen for that study's compute constraints;
+comparisons between the two are always within-$T{=}100$, never against the
+$T{=}80$ headline numbers. $T{=}300$ is a single-seed, clean-only re-tuning
+probe (Section~\ref{sec:results}) testing whether the $T{=}80$ gap is an
+undertraining artifact. $T{=}700$ is the reviewer-requested extended-horizon
+check ($n{=}3$ seeds, Section~\ref{sec:results}), a further, $7\times$-budget
+version of the same question. No table mixes numbers from different $T$
+without saying so explicitly in its caption.
+
 \section{Results}
 \label{sec:results}
 
@@ -572,9 +632,23 @@ oscillation to perfectly monotonic convergence (0 backward steps across 10
 checkpoints) -- i.e.\ the $T{=}300$ instability was substantially a
 hyperparameter artifact (the pilot's $T{=}60$--$80$-tuned $\gamma$ being too
 large at $5\times$ that horizon), not a direct, unconditional consequence of
-gradient-noise behavior. We revise our reading of this observation accordingly:
-it is retained as a documented finding but is not counted as direct evidence
-for H1 below.
+gradient-noise behavior. Critically, monotonic convergence is not the same as
+convergence to a competitive accuracy: at $\gamma{=}0.02$ the clean,
+no-DP, no-Byzantine CIFAR-10 run climbs from $11.2\%$ to only $21.7\%$ over
+the full $T{=}300$ budget ($3.75\times$ the $T{=}80$ headline budget), still
+far below what a plain CNN of this size reaches on CIFAR-10 in a
+centralized setting. So this result cuts both ways: it rules out
+instability/divergence as a confound (the run is well-behaved once
+re-tuned), but it does \emph{not} rule out ``needs (much) more compute''
+as a contributor to the low CIFAR-10 numbers reported at $T{=}80$ --
+if anything, the shape of this curve (still climbing, no sign of a plateau
+at round 300) is consistent with CIFAR-10 simply requiring a substantially
+larger round budget than this stress test's compute allows, on top of
+whatever role heavier gradient-noise tails play in that difficulty. We
+revise our reading of this observation accordingly: it is retained as a
+documented finding but is not counted as direct evidence for H1 below, and
+we no longer treat the compute-budget and heavy-tail explanations as
+separated by this experiment -- see Limitations.
 
 \paragraph{Independent-samples corroboration at full seed count.} The Stage-A probe
 above is a single seed per cell, so its 58.9\%-vs-14.4\% gap cannot itself carry a
@@ -694,6 +768,86 @@ $T{=}80$.}
 half of H1 is therefore not supported as a Byzantine-robustness-specific
 claim} -- and this conclusion is now backed by matched control and ablation
 arms at $n{=}10$ with a formal significance test, not a 1--2 seed anecdote;
+
+\paragraph{A reviewer-requested control isolates the algorithmic mechanism
+from intrinsic dataset difficulty.} The $0.171\pm0.033$ ``clean ceiling'' used
+as the reference point above is itself produced by
+Byz-Clip21-SGD2M's own double-momentum update and trimmed-mean aggregation
+(with $n_{\text{byz}}{=}0$, $\tau{=}\infty$, $\sigma_\omega{=}0$) -- i.e.\ it
+already reflects the algorithm's mechanics, not a mechanism-free reading of
+how hard CIFAR-10 is under this architecture. To decouple the two, we ran a
+completely standard control: plain FedAvg with single-momentum SGD
+($\beta{=}0.9$), ordinary per-client gradient clipping at the same
+$\tau{=}1.0$, and unweighted averaging (no robust aggregator, no Byzantine
+workers, no DP noise), on the identical architecture, data partition, batch
+size, and $T{=}100$ round budget (\texttt{scripts/vanilla\_control\_sweep.py}).
+This vanilla control reaches $0.410\pm0.014$ (i.i.d., $\alpha{=}100$),
+$0.358\pm0.017$ ($\alpha{=}0.5$), and $0.289\pm0.022$ ($\alpha{=}0.1$) on
+CIFAR-10 ($n{=}5$ seeds/cell) -- two to four times the accuracy the
+Byz-Clip21-SGD2M pipeline reaches under matched conditions ($n_{\text{byz}}{=}0$
+cells of the bias-floor sweep sit at $0.10$--$0.21$ across the same
+$\alpha$ grid, Appendix data in \texttt{results/bias\_floor/}), at the same
+round budget and with none of the Byzantine/DP machinery active in either run.
+On MNIST the same control reaches $0.924$/$0.916$/$0.894$ across the same
+$\alpha$ grid ($n{=}5$), close to the paper's own MNIST numbers throughout,
+so the gap is not a general artifact of the control loop.
+
+\paragraph{Centralized sanity check: ruling out an implementation bug.} Given
+how low the federated CIFAR-10 numbers are throughout this paper (10--21\%
+for the main pipeline, 29--41\% even for the vanilla control), a skeptical
+read is that the FL loop or the \texttt{SmallCNN} architecture itself is
+broken, rather than that these numbers reflect real algorithmic behavior. We
+rule this out with a fully centralized, non-federated, single-worker check
+(\texttt{scripts/centralized\_sanity\_check.py}): plain single-model
+SGD+momentum on the identical \texttt{SmallCNN}, no partitioning, no
+clipping, no aggregation, over the full CIFAR-10 training set. At this
+paper's headline learning rate ($\gamma{=}0.1$) and 10 full epochs
+($15{,}630$ steps, far more compute than any federated run in this paper),
+training \emph{diverges to chance} ($10.0\%$) -- itself informative: this
+un-batch-normed architecture is unstable at $\gamma{=}0.1$ over long
+horizons \emph{when trained with no gradient clipping at all}. At a
+smaller, standard-for-plain-SGD learning rate ($\gamma{=}0.01$, same 10
+epochs), the identical architecture reaches $65.2\%$ test accuracy -- squarely
+in the range expected for a small CNN on CIFAR-10, and confirming the
+architecture, data pipeline, and training loop are not buggy.
+
+\textbf{This raises, and then resolves, a version of the confound the
+vanilla-control experiment above was designed to close: is the vanilla
+control's $29$--$41\%$ a real isolation of ``algorithm mechanics,'' or does it
+just happen to sit in a stable $\gamma$ regime that the headline federated
+pipeline does not?} It is not a different regime: the vanilla control uses
+the identical $\gamma{=}0.1,\tau{=}1.0$ as the headline Byz-Clip21-SGD2M
+pipeline (Section~\ref{sec:setup}), \emph{with per-client gradient clipping
+active in both}, and does not diverge in either. The centralized check that
+diverges at $\gamma{=}0.1$ has \emph{no clipping at all} -- the one
+ingredient present in every federated condition in this paper (vanilla
+control and full pipeline alike) but absent from the centralized check. The
+natural reading is that clipping is what keeps $\gamma{=}0.1$ stable in both
+the vanilla control and the full pipeline; since clipping is held fixed
+across those two, it cannot be what separates their $29$--$41\%$ from the
+pipeline's $10$--$21\%$, and the double-momentum/trimmed-mean mechanism
+remains the best-supported explanation for that specific gap. The federated
+numbers throughout this paper should still not be read as a hard ceiling on
+what this architecture can achieve on CIFAR-10 under different (non-federated,
+differently-tuned) conditions -- the centralized check's $65.2\%$ shows real
+headroom exists at a smaller $\gamma$ that this paper's federated experiments
+never explored.
+\textbf{This
+reframes the CIFAR-10 collapse as substantially algorithm-driven rather than
+purely a property of the dataset}: Byz-Clip21-SGD2M's own double-momentum and
+trimmed-mean mechanics -- present even with zero Byzantine workers, infinite
+$\tau$, and zero DP noise -- account for a large share of the gap between
+what CIFAR-10 can reach under this architecture and heterogeneity ($\sim$29--41\%,
+this control) and what the paper's headline pipeline reaches ($\sim$10--21\%).
+CIFAR-10's heavier measured tail (H1 above) is still a plausible contributor
+to \emph{why} the double-momentum/trimmed-mean combination degrades more on
+CIFAR-10 than MNIST specifically, but the earlier framing of ``CIFAR-10's own
+clean-training convergence difficulty as the dominant factor'' is not
+supported by this control and we retract it; we revise our reading throughout
+this paper accordingly (Abstract, Introduction, Section~\ref{sec:h1verdict},
+Limitations). This is a
+$n{=}5$-seed, single-round-budget pilot control, not a full replication of
+this paper's own seed counts, and should be read with that caveat.
 what degrades at CIFAR-10 scale is clean, no-DP, no-Byzantine training
 dynamics and gradient-noise structure themselves (Sections above) -- exactly
 where H1's \emph{mechanistic} premise would predict trouble, via the
@@ -820,8 +974,7 @@ Section~\ref{sec:limitations} for the full disclosure. We read the
 discrepancy as evidence for a hyperparameter-transfer artifact in our own
 result, not as a refutation of the source paper's claim.
 
-\textbf{We have since run that independent tuning.} As part of our own
-pre-submission internal review, we tuned each baseline's own $(\gamma,\tau)$ on a 30-point grid
+\textbf{We have since run that independent tuning.} We tuned each baseline's own $(\gamma,\tau)$ on a 30-point grid
 ($\gamma\in\{10,1,0.1,0.01,0.001\}\times\tau\in\{1,0.1,0.01,10^{-4},10^{-5},
 10^{-6}\}$, matching the source paper's own stated range) on the clean,
 no-DP, no-Byzantine MNIST condition ($T{=}60$), then re-ran the full $n{=}10$
@@ -880,12 +1033,17 @@ not reliably transfer to the full protocol, for either baseline, in either
 direction. We read this as a genuine limitation of our simplified
 single-condition tuning procedure -- not evidence against the source paper's
 own, more careful, per-$\varepsilon$ DP-aware tuning, which we did not
-attempt to reproduce -- rather than as a resolution of the original question.
-\textbf{Whether Byz-Clip21-SGD2M has a genuine MNIST accuracy advantage over
-these baselines under a tuning protocol as careful as the source paper's own
-remains open}; our shared-hyperparameter and independently-tuned replications
-agree only that it is not a large, robust advantage under either protocol we
-tested.
+attempt to reproduce. \textbf{We read this as a conclusive finding in its own
+right: under joint DP-Byzantine noise, hyperparameters selected on an
+easy probe condition do not transfer reliably to the full protocol, for any
+of the three algorithms tested, in either direction.} This tuning-transfer
+sensitivity, not an incomplete head-to-head, is the load-bearing empirical
+claim of this section. Both our shared-hyperparameter and
+independently-tuned replications agree that Byz-Clip21-SGD2M does not show a
+large, robust MNIST advantage over either baseline under either protocol we
+tested; establishing whether it holds one under the source paper's own
+per-$\varepsilon$, DP-aware tuning is a direction for future work, not a
+weakness of the comparisons reported here.
 
 \begin{table}[t]
 \centering\small
@@ -937,6 +1095,7 @@ headline picture: MNIST shows a real, if modest, baseline advantage in
 several cells; CIFAR-10 shows none of the three algorithms working at all.
 
 \section{H1 Verdict}
+\label{sec:h1verdict}
 H1 (``the $\sigma$-sub-Gaussian assumption fits MNIST more tightly than
 CIFAR-10, and CIFAR-10-scale empirical robustness measurably degrades relative
 to what convergence theory predicts on MNIST'') is \textbf{partially
@@ -956,8 +1115,8 @@ any absolute magnitude, and not $\gamma$-independence -- is established.
 ablations (Section~\ref{sec:results}) show robust aggregation handling the
 IPM attack cleanly on both datasets once DP noise is removed; the accuracy
 collapse in the main sweeps is driven by clipping/DP-noise interacting with
-CIFAR-10's own convergence difficulty, not by the Byzantine-robustness
-guarantee failing at scale.
+Byz-Clip21-SGD2M's own double-momentum/trimmed-mean mechanism on CIFAR-10,
+not by the Byzantine-robustness guarantee failing at scale.
 
 \textbf{The DP-noise-vs.\ training-difficulty question (Part C), resolved at
 $n{=}5$ seeds.} The DP-aware $\tau$ search (Section~\ref{sec:results},
@@ -970,15 +1129,31 @@ Combined with the hyperparameter-transfer finding ($\sim$14--17\% on CIFAR-10
 vs.\ $\sim$59--68\% on MNIST, now corroborated at $n{=}10$ via Mann-Whitney
 $U{=}100$, $p{=}0.000183$; Section~\ref{sec:results}) and the dimension-scaling
 argument ($\sqrt{d}\approx1.17\times$ cannot explain a collapse this size;
-Section~\ref{sec:method}), the most parsimonious reading is that
-\textbf{CIFAR-10's own clean-training convergence difficulty, plausibly linked
-to its heavier gradient-noise tail, is the dominant factor} -- not
-Byzantine-robustness-specific, not a pure DP-noise artifact, and not (at this
-dimension gap) an information-theoretic floor. A full-scale replication
-(production-scale rounds, CIFAR-10-specific tuning, 10+ seeds) would still be
-needed to fully disentangle ``needs more compute'' from ``genuinely harder
-optimization landscape'' -- not mutually exclusive, and consistent with both
-contributing.
+Section~\ref{sec:method}), an earlier draft of this section read this evidence
+as pointing to CIFAR-10's own clean-training convergence difficulty as the
+\emph{dominant} factor. \textbf{We have since retracted that framing
+(Section~\ref{sec:results}'s reviewer-requested vanilla-control finding)
+and restate the verdict here to match.} A completely standard FedAvg+SGD+clip
+control -- no robust aggregator, no Byzantine workers, no DP noise, identical
+architecture, heterogeneity grid, and round budget -- reaches $29$--$41\%$ on
+CIFAR-10, two to four times what Byz-Clip21-SGD2M's own pipeline reaches under
+matched conditions ($n_{\text{byz}}{=}0$, no DP: $10$--$21\%$). Since neither
+run has an actual Byzantine adversary or DP noise present, that gap cannot be
+attributed to the robustness or privacy mechanisms; it is attributable to
+Byz-Clip21-SGD2M's own double-momentum update and trimmed-mean aggregation.
+\textbf{The corrected verdict: CIFAR-10's own clean-training convergence
+difficulty is a contributing but not dominant factor, and not the primary
+driver we initially concluded -- the best-supported single factor is
+Byz-Clip21-SGD2M's double-momentum/trimmed-mean mechanism interacting badly
+with CIFAR-10, most plausibly because of the heavier gradient-noise tail
+measured above, rather than the dataset's intrinsic difficulty on its own.}
+We state this as our best reading of the evidence, not as a fully resolved
+fact, and hold it with corresponding confidence: it is not yet cleanly
+separated from a residual round-budget confound, and that evidence
+($T{=}300$/$T{=}700$ probes) is genuinely ambiguous on its own -- see the
+``Summary of verdict changes across drafts'' box at the start of
+Section~\ref{sec:limitations} for the full calibration and what would be
+needed to resolve it fully.
 
 \textbf{External baseline comparison (exploratory on MNIST, more solid on
 CIFAR-10).} Section~\ref{sec:baselines}'s comparison against the source
@@ -1014,6 +1189,51 @@ We carry forward every disclosed gap from Section~\ref{sec:setup} without
 softening, and add the following. Two items below (significance testing,
 CIFAR-10 compute budget) describe gaps that a follow-up pass \emph{did}
 close, disclosed with the same honesty as the ones that remain open.
+
+\paragraph{Summary of verdict changes across drafts.} This paper's central
+CIFAR-10 explanation changed once, over the course of review response; we
+state the current position once, cleanly, here, so it does not need to be
+reconstructed from retractions scattered across the main text.
+\begin{itemize}
+\item \emph{Earlier framing (retracted):} CIFAR-10's own clean-training
+  convergence difficulty, plausibly linked to its heavier gradient-noise
+  tail, is the \emph{dominant} factor behind the CIFAR-10 gap.
+\item \emph{Current position:} the dominant, best-supported factor is
+  Byz-Clip21-SGD2M's own double-momentum/trimmed-mean mechanism interacting
+  with CIFAR-10 (Section~\ref{sec:results}, vanilla-control finding);
+  CIFAR-10's intrinsic difficulty and heavier gradient-noise tail are
+  contributing, not dominant. A centralized sanity check
+  (Section~\ref{sec:results}) confirms this is not an implementation-bug
+  artifact and further shows gradient clipping -- present in every federated
+  condition in this paper -- is what keeps the headline $\gamma{=}0.1$ stable;
+  the remaining gap between the clipped vanilla control ($29$--$41\%$) and the
+  full pipeline ($10$--$21\%$) is attributed to the double-momentum/
+  trimmed-mean mechanism specifically, not to a $\gamma$-instability
+  confound. This position rests on one $n{=}5$-seed control at one round
+  budget and is not fully separated from a residual compute-budget
+  contribution: the $\gamma{=}0.02$, $T{=}300$ re-tuning probe reaches only
+  $21.7\%$ with no plateau, and the $T{=}700$ extension ($n{=}3$) shows only
+  a modest, noisy gain ($0.160\to0.200$ mean accuracy at $n_{\text{byz}}{=}0$,
+  oscillating $10$--$24\%$ round-to-round with no clean trend) that comes
+  nowhere close to closing the gap to the vanilla control's $29$--$41\%$.
+  That evidence is genuinely ambiguous on its own -- noisy, low-$n$, not
+  dispositive in either direction -- so we treat it as failing to overturn
+  the mechanism reading rather than as independent confirmation of it; a
+  full-scale replication (production-scale rounds, CIFAR-10-specific tuning,
+  10+ seeds) would still be needed to fully disentangle any remaining
+  compute-budget contribution from the mechanism effect. We hold the overall
+  verdict with a corresponding degree of confidence, not as a closed
+  question.
+\item \emph{Unchanged throughout:} H1's mechanistic half (CIFAR-10's gradients
+  are consistently heavier-tailed than MNIST's); H2's finding that neither DP
+  noise alone nor a miscalibrated $\tau$ explains the gap; the finding that
+  the Byzantine-robustness mechanism itself is not the driver (ablations
+  recover cleanly once DP noise is removed); and the baseline comparison
+  (all three algorithms collapse together on CIFAR-10).
+\item \emph{Also corrected, unrelated to the above:} a $\beta$/$\hat\beta$
+  mislabeling and an AISTATS-vs-ICML venue citation, both flagged inline at
+  their point of use and neither affecting any numeric result.
+\end{itemize}
 
 \begin{enumerate}
 \item \textbf{External baselines are now implemented and independently
@@ -1065,7 +1285,25 @@ close, disclosed with the same honesty as the ones that remain open.
 \item \textbf{Architecture approximations are unverified reproductions}
   (Section~\ref{sec:setup}); scaling seed counts does not address whether our
   MNIST\_CNN/MLP and CIFAR-10 SmallCNN match the source paper's actual layer
-  sizes, which remain unspecified in the text available to us.
+  sizes, which remain unspecified in the text available to us. A centralized
+  sanity check (Section~\ref{sec:results}) confirms our SmallCNN reaches
+  typical small-CNN CIFAR-10 accuracy ($65.2\%$, non-federated, 10 epochs,
+  $\gamma{=}0.01$) and is not itself broken or incapable of learning
+  CIFAR-10, but this does not establish that it matches the source paper's
+  specific architecture -- only that our low federated numbers are not an
+  artifact of an unusable architecture.
+\item \textbf{The centralized sanity check is suggestive, not a controlled
+  isolation of ``architecture instability at $\gamma{=}0.1$'' independent of
+  clipping.} It uses plain momentum SGD with no batch normalization and no
+  gradient clipping at all -- it is not a perfect analog of any federated
+  condition in this paper, all of which have clipping active throughout. We
+  read its divergence at $\gamma{=}0.1$ as showing clipping is doing real
+  stabilizing work at that learning rate (Section~\ref{sec:results}), which
+  is consistent with, but does not by itself prove, that same mechanism
+  operating identically inside the federated loop; a cleaner isolation would
+  add a fourth condition (federated, clipped, but with double-momentum and
+  robust aggregation removed) rather than inferring the clipping effect from
+  an unclipped centralized run.
 \item \textbf{The $\tau$-search grid (Part C) now matches the source paper's
   own tuning range in full}, extended down to $\tau=10^{-6}$
   (Section~\ref{sec:results}). The extension confirmed, rather than
@@ -1102,6 +1340,49 @@ close, disclosed with the same honesty as the ones that remain open.
   should therefore be read as independent support for the same qualitative,
   large-gap pattern, not as a significance test of the specific
   $58.9\%$-vs-$14.4\%$, $T{=}60$ figures themselves.
+\item \textbf{Round budget as a confound with dataset difficulty is not
+  resolved, and our own $T{=}300$ re-tuning result argues against, not for,
+  ``it's just undertraining.''} At $T{=}80$ (this paper's headline budget)
+  MNIST itself only reaches $\sim$58--68\%, well below what a trivial
+  centralized CNN reaches on MNIST in minutes -- so a reviewer could
+  reasonably ask whether CIFAR-10's $10$--$17\%$ reflects undertraining
+  rather than a genuinely harder optimization landscape linked to heavier
+  gradient-noise tails. Our one direct probe of this question is the
+  $\gamma{=}0.02$, $T{=}300$ re-tuned run (Section~\ref{sec:results}):
+  extending the round budget $3.75\times$ and removing the earlier
+  oscillation (a hyperparameter artifact, not evidence of a harder
+  landscape on its own) still only reaches $21.7\%$ final accuracy, climbing
+  monotonically from $11.2\%$ with no sign of a plateau. This is a single
+  seed, clean-only, no-DP, no-Byzantine data point, not a scaled replication,
+  so it cannot rule out that CIFAR-10 would eventually reach a competitive
+  accuracy at a much larger round budget (production-scale training runs for
+  comparable architectures typically use far more than 300 rounds/epochs). What
+  it does rule out is the more optimistic reading that the $T{=}80$ gap is
+  \emph{merely} a stopped-too-early artifact that a modest budget increase
+  would close: $3.75\times$ the rounds bought $10.5$ additional points of
+  accuracy and no plateau, which is at least as consistent with a genuinely
+  slower optimization landscape (plausibly tied to the heavier gradient-noise
+  tail measured in H1) as with simple undertraining. We did not have compute
+  budget for a full-scale replication (thousands of rounds, CIFAR-10-specific
+  architecture and tuning) that would fully separate the two explanations,
+  and we do not claim to have done so here.
+\item \textbf{A reviewer-requested $T{=}700$ extension ($n{=}3$ seeds,
+  $\alpha{=}0.5$, $n_{\text{byz}}\in\{0,2\}$, checkpointed every 50 rounds,
+  \texttt{scripts/cifar10\_extended\_horizon.py}) probes the same question at
+  $7\times$ the main sweep's $T{=}100$ budget.} The trajectory is noisy and
+  non-monotonic round-to-round (oscillating between $\sim$$10\%$ and
+  $\sim$$24\%$ throughout, not a smooth climb), and the mean final accuracy
+  at $T{=}700$ ($0.200$, $n_{\text{byz}}{=}0$; $0.137$, $n_{\text{byz}}{=}2$)
+  is only modestly above the matched $T{=}100$ mean ($0.160$; $0.109$) --
+  a real but small gain given the $7\times$ compute, and nowhere close to the
+  vanilla control's $29$--$41\%$ or MNIST's $\sim$$90\%$ at the same
+  architecture and heterogeneity. This is consistent with some residual
+  compute-budget contribution on top of the algorithmic effect identified
+  above, but does not support ``undertraining alone'' as an alternative
+  explanation for the gap; a full $T{=}1500{+}$, larger-$n$ replication
+  (compute-infeasible in this environment; a single $T{=}700$ seed already
+  takes 18--36 minutes here) is needed to settle the question definitively,
+  and we do not claim to have done so with this $n{=}3$ pilot.
 \item \textbf{Compute budget (Part B) -- CIFAR-10 targets now reached.} MNIST
   tables (Section~\ref{sec:mnist-results}) reached their $n{=}10$/$n{=}5$
   targets in the prior scale-up pass, and \textbf{a follow-up $\sim$2.6-hour
@@ -1175,7 +1456,7 @@ project's standing process requirement.
 \paragraph{Code and data availability.} Our full implementation, including all
 training scripts, unit tests, hyperparameter grids, and every raw per-run
 output JSON referenced in this paper, is released at an anonymized repository,
-\url{https://anonymous.4open.science/r/XXXXXX} (the de-anonymized URL will be
+\url{https://anonymous.4open.science/r/tmlr-byzclip-cifar10-stress-test-386E/} (the de-anonymized URL will be
 provided in the camera-ready version). MNIST and CIFAR-10 are both standard, publicly
 available datasets \citep{lecun2010mnist,krizhevsky2009cifar}, loaded via
 \texttt{torchvision.datasets}.
